@@ -39,6 +39,13 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 		];
 		panel.webview.options = { enableScripts: true, localResourceRoots: roots };
 		panel.webview.html = this.html(panel.webview);
+		// Groups edited in settings.json while the viewer is open show up without reopening it.
+		const settingsWatcher = vscode.workspace.onDidChangeConfiguration(event => {
+			if (event.affectsConfiguration('tiffVisualizer.channels') || event.affectsConfiguration('tiffVisualizer.transcripts')) {
+				void panel.webview.postMessage({ type: 'settings', channelDefaults: this.getChannelDefaults(), transcriptGroups: this.getTranscriptGroups() });
+			}
+		});
+		panel.onDidDispose(() => settingsWatcher.dispose());
 		panel.webview.onDidReceiveMessage(async message => {
 			switch (message?.type) {
 				case 'ready':
@@ -160,6 +167,10 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 		}
 	}
 
+	private getTranscriptGroups(): Record<string, unknown> {
+		return vscode.workspace.getConfiguration('tiffVisualizer.transcripts').get<Record<string, unknown>>('groups', {});
+	}
+
 	private getChannelDefaults(): ChannelDefaults {
 		const config = vscode.workspace.getConfiguration('tiffVisualizer.channels');
 		return {
@@ -183,7 +194,7 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 		};
 		const settings = {
 			channelDefaults: this.getChannelDefaults(),
-			transcriptGroups: vscode.workspace.getConfiguration('tiffVisualizer.transcripts').get<Record<string, unknown>>('groups', {}),
+			transcriptGroups: this.getTranscriptGroups(),
 		};
 		return /* html */`<!DOCTYPE html>
 <html lang="en">

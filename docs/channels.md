@@ -115,6 +115,8 @@ above the channel list. Each row has:
 | **Solo** | Show only the channels in this group, switching on any that were off. Pressing Solo again ends the solo and switches off the ones Solo had turned on |
 | `2/3` | How many of the group's channels are on, out of those that matched. Listed members that matched nothing are named under the group |
 
+The **From selected channels** button makes a group (Group 1, Group 2, …) of the channels that are switched on (only the filtered ones while a filter is on). Double-click any group's name to rename it; the arrow beside a group opens a **Copy as JSON** button that copies the `settings.json` lines for that group, and **Copy all as JSON** at the bottom copies every group; groups made this way have a × to delete them. Groups made or renamed in the panel last until the panel is reloaded; to keep one, put it in the `groups` setting.
+
 A group Solo and a single-channel Solo (or the channel selector) replace each
 other. Soloing a channel or group, or choosing a channel with the selector,
 switches it on if it was off, until the solo is cleared. The selector keeps its position while a group is soloed, since a group is

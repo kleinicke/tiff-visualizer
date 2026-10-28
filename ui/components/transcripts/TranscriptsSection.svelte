@@ -1,29 +1,26 @@
 <script lang="ts">
   import type { TranscriptsPanelModel } from '../../../media/modules/transcripts/transcripts-model';
   import SearchPicker from './SearchPicker.svelte';
+  import GroupName from '../GroupName.svelte';
+  import CopyJson from '../CopyJson.svelte';
+  import { transcriptGroupsJson } from '../../../media/modules/groups-json';
   let { transcripts }: { transcripts: TranscriptsPanelModel } = $props();
   let open = $state(true);
   let query = $state('');
   let unfolded = $state<string[]>([]);
   const toggleFold = (name: string) => { unfolded = unfolded.includes(name) ? unfolded.filter(entry => entry !== name) : [...unfolded, name]; };
-  let creating = $state(false);
-  let newName = $state('');
-  let newGenes = $state('');
   let createMessage = $state<string | null>(null);
   const ready = $derived(transcripts.status === 'ready');
   const needle = $derived(query.trim().toLowerCase());
   const shown = $derived(needle ? transcripts.listed.filter(gene => gene.name.toLowerCase().includes(needle)) : transcripts.listed);
   const filtered = $derived(transcripts.filtering || !!needle);
-  function create(event: Event) {
-    event.preventDefault();
-    createMessage = transcripts.createGroup(newName, newGenes);
-    if (!createMessage) { newName = ''; newGenes = ''; creating = false; }
-  }
   const names = () => (filtered ? shown.map(gene => gene.name) : undefined);
-  function fromListed() {
-    const name = newName.trim() || `Group ${transcripts.groups.length + 1}`;
-    createMessage = transcripts.groupFromListed(name, names());
-    if (!createMessage) newName = '';
+  function fromSelected() { createMessage = transcripts.groupFromSelected(names()); }
+  function renamed(group: { name: string; rename: (name: string) => string | null }, next: string) {
+    const before = group.name;
+    const error = group.rename(next);
+    if (!error) unfolded = unfolded.map(entry => entry === before ? next.trim() : entry);
+    return error;
   }
 </script>
 <section class="cells-section transcripts-section">
@@ -34,9 +31,7 @@
   </div>
   {#if open}
     <div class="cells-body">
-      {#if transcripts.status === 'idle'}
-        <button class="measure-button" onclick={transcripts.load}>Load transcripts</button>
-      {:else if transcripts.status === 'loading'}<div class="measure-note">{transcripts.message ?? 'Loading transcripts…'}</div>
+      {#if transcripts.status === 'idle' || transcripts.status === 'loading'}<div class="measure-note">{transcripts.message ?? 'Loading transcripts…'}</div>
       {:else if transcripts.status === 'error'}
         <div class="measure-note cells-source-error">{transcripts.message}</div>
         <button class="measure-button" onclick={transcripts.load}>Retry</button>
@@ -65,7 +60,7 @@
               <input type="checkbox" disabled={!ready || group.found === 0} checked={group.state === 'all'} indeterminate={group.state === 'some'}
                 title={group.state === 'all' ? 'Hide this group\'s genes' : 'Add this group\'s genes to the list and show them'} onchange={group.toggle}>
               <input type="color" class="channel-swatch" value={group.color} title="Group colour" oninput={e => group.setColor(e.currentTarget.value)}>
-              <span class="channel-name" title={group.name}>{group.name}</span>
+              <GroupName name={group.name} rename={next => renamed(group, next)} />
               <span class="channel-group-count" title={ready ? `${group.on} of ${group.found} genes shown${group.missing.length ? `. Not in the file: ${group.missing.join(', ')}` : ''}` : `${group.total} genes`}>{ready ? `${group.on}/${group.found}` : group.total}</span>
               <button class="group-filter" class:active={group.filtering} disabled={!ready} aria-pressed={group.filtering}
                 title={group.filtering ? 'Stop filtering the gene list to this group' : 'Show only this group in the gene list. Several groups combine (union).'} onclick={group.toggleFilter}>
@@ -79,6 +74,7 @@
                   title={group.palette ? 'Each gene has its own colour, built around the group colour (compare genes within the group). Click for one tint.' : 'The whole group has one tint (compare groups). Click to give each gene its own colour.'}
                   onclick={() => group.setPalette(!group.palette)}>{group.palette ? 'Palette' : 'Tint'}</button>
                 <button class="measure-chip" disabled={!ready} title="Take this group's genes out of the gene list" onclick={group.removeAll}>Remove genes</button>
+                <CopyJson text={() => transcriptGroupsJson([group])} title="Copy the settings.json lines that define this group" />
               </div>
             {/if}
           </div>
@@ -86,16 +82,9 @@
         <SearchPicker items={() => transcripts.groupChoices.map(group => group.name)} placeholder="Add a group…" label="Add a gene group"
           detail={name => `${transcripts.groupChoices.find(group => group.name === name)?.size ?? 0} genes`} onpick={transcripts.addGroup} />
         <div class="transcript-new">
-          <button class="measure-button" aria-expanded={creating} onclick={() => (creating = !creating)}>{creating ? 'Cancel' : 'New group…'}</button>
-          <button class="measure-button" disabled={!ready || transcripts.genes.length === 0} title={filtered ? 'Make a group of the filtered genes' : 'Make a group of every gene in the list'} onclick={fromListed}>{filtered ? 'From filtered genes' : 'From added genes'}</button>
+          <button class="measure-button" disabled={!ready || transcripts.genes.length === 0} title={filtered ? 'Make a group of the filtered genes that are switched on' : 'Make a group of the genes that are switched on'} onclick={fromSelected}>From selected genes</button>
+          <CopyJson chip={false} label="Copy all as JSON" disabled={transcripts.groups.length === 0} text={() => transcriptGroupsJson(transcripts.groups)} title="Copy the settings.json lines that define every group in the viewer" />
         </div>
-        {#if creating}
-          <form class="transcript-create" onsubmit={create}>
-            <input type="text" class="measure-input" placeholder="Group name" aria-label="Group name" bind:value={newName}>
-            <textarea class="measure-input" rows="3" placeholder="Gene names, separated by spaces, commas or new lines" aria-label="Gene names" spellcheck="false" bind:value={newGenes}></textarea>
-            <button type="submit" class="measure-button" disabled={!newName.trim() || !newGenes.trim()}>Create</button>
-          </form>
-        {/if}
         {#if createMessage}<div class="measure-note cells-source-error">{createMessage}</div>{/if}
       </details>
 
@@ -118,7 +107,7 @@
           {#if filtered && shown.length === 0}<div class="measure-note">No gene matches the current filters.</div>{/if}
         </div>
       {/if}
-      <SearchPicker items={transcripts.geneChoices} placeholder={ready ? 'Add a gene…' : 'Load transcripts to add genes'} label="Add a gene" disabled={!ready}
+      <SearchPicker items={transcripts.geneChoices} placeholder={ready ? 'Add a gene…' : 'Loading transcripts…'} label="Add a gene" disabled={!ready}
         detail={name => transcripts.geneCount(name).toLocaleString()} onpick={transcripts.addGene} />
 
       <label class="cells-field">

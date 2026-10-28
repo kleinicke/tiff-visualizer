@@ -4,6 +4,9 @@
   import { COLORMAP_NAMES } from '../../media/modules/colormaps';
   import { panelGestures } from '../panel-gestures';
   import RangeSlider from './RangeSlider.svelte';
+  import GroupName from './GroupName.svelte';
+  import CopyJson from './CopyJson.svelte';
+  import { channelGroupsJson } from '../../media/modules/groups-json';
   import CellsSection from './cells/CellsSection.svelte';
   import TranscriptsSection from './transcripts/TranscriptsSection.svelte';
   let { model }: { model: Writable<ChannelsModel> } = $props();
@@ -15,12 +18,18 @@
   // Union over the active group filters, intersected with the text filter.
   // A filter naming a group that no longer exists is ignored.
   const inActiveGroup = (position: number) => {
-    const active = $model.groups.filter(group => filterGroups.includes(group.name));
+    const active = $model.groups.filter(group => filterGroups.includes(group.id));
     return active.length === 0 || active.some(group => group.positions.includes(position));
   };
   const shows = (position: number, name: string) => inActiveGroup(position) && matches(name);
-  const filtering = () => !!query.trim() || $model.groups.some(group => filterGroups.includes(group.name));
+  const filtering = () => !!query.trim() || $model.groups.some(group => filterGroups.includes(group.id));
   const shownCount = () => $model.planes.filter((plane, position) => shows(position, plane.name)).length;
+  let groupMessage = $state<string | null>(null);
+  // Sections keep their own open state: tying `open` to the model would reset it on every update.
+  let globalOpen = $state(!$model.compact);
+  let groupsOpen = $state(!$model.compact);
+  let groupsUnfolded = $state<string[]>([]);
+  const toggleGroupFold = (id: string) => { groupsUnfolded = groupsUnfolded.includes(id) ? groupsUnfolded.filter(entry => entry !== id) : [...groupsUnfolded, id]; };
   function clearFilters() { query = ''; filterGroups = []; }
   let unfolded = $state<number[]>([]);
   function toggleFold(plane: number) { unfolded = unfolded.includes(plane) ? unfolded.filter(entry => entry !== plane) : [...unfolded, plane]; }
@@ -45,7 +54,7 @@
     <button class="measure-close" title="Close the channels panel" onclick={$model.close}>×</button>
   </div>
   {#if open && $model.planes.length >= 2}
-    <details class="channels-global" open={!$model.compact}>
+    <details class="channels-global" bind:open={globalOpen}>
       <summary class="channels-section-title">{filtering() ? `Filtered channels (${shownCount()}/${$model.planes.length})` : `All channels (${$model.planes.length})`}</summary>
       <div class="channels-toolbar">
         <button class="measure-button" title={filtering() ? 'Switch the filtered channels on' : 'Switch every channel on'} onclick={() => $model.selectAll(scope())}>Select all</button>
@@ -61,28 +70,39 @@
   <div class="channels-body">
     {#if $model.planes.length < 2}<div class="measure-note">{$model.status ?? 'This image has a single channel.'}</div>
     {:else}
-      {#if $model.groups.length}
-        <details class="channel-groups" open={!$model.compact}>
-          <summary>Groups ({$model.groups.length})</summary>
-          {#each $model.groups as group (group.name)}
-            {@const unusable = !$model.composite || group.found === 0}
-            <div class="channel-group-row" class:disabled={!$model.composite} class:soloed={group.soloed}>
-              <input type="checkbox" disabled={unusable} checked={group.state === 'all'} indeterminate={group.state === 'some'}
-                title={group.state === 'all' ? 'Switch this group off' : 'Switch every channel in this group on'} onchange={() => $model.toggleGroup(group.name)}>
-              <span class="channel-name" title={group.name}>{group.name}</span>
-              <span class="channel-group-count" title={`${group.on} of ${group.found} channels on${group.missing.length ? `. Not found: ${group.missing.join(', ')}` : ''}`}>{group.on}/{group.found}</span>
-              <button class="group-filter" class:active={filterGroups.includes(group.name)} disabled={group.found === 0} aria-pressed={filterGroups.includes(group.name)}
-                title={filterGroups.includes(group.name) ? 'Stop filtering the list to this group' : 'Show only this group in the channel list. Several groups combine (union); the text filter narrows them further.'} onclick={() => toggleGroupFilter(group.name)}>
-                <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M1.5 2h13L9.5 8.5V14l-3-1.5V8.5z" fill="currentColor"/></svg>
-              </button>
-              <button class="measure-chip channel-solo" class:active={group.soloed} disabled={unusable}
-                title="Show only the channels in this group, switching them on if they are off. The other channels keep their settings." onclick={() => $model.soloGroup(group.name)}>Solo</button>
+      <details class="channel-groups" bind:open={groupsOpen}>
+        <summary>Groups ({$model.groups.length})</summary>
+        {#each $model.groups as group (group.id)}
+          {@const unusable = !$model.composite || group.found === 0}
+          {@const isFolded = !groupsUnfolded.includes(group.id)}
+          <div class="channel-group-row" class:disabled={!$model.composite} class:soloed={group.soloed}>
+            <button class="channel-fold" aria-expanded={!isFolded} title={isFolded ? 'Show this group\'s channels' : 'Hide this group\'s channels'} onclick={() => toggleGroupFold(group.id)}>{isFolded ? '▸' : '▾'}</button>
+            <input type="checkbox" disabled={unusable} checked={group.state === 'all'} indeterminate={group.state === 'some'}
+              title={group.state === 'all' ? 'Switch this group off' : 'Switch every channel in this group on'} onchange={() => $model.toggleGroup(group.id)}>
+            <GroupName name={group.name} rename={next => $model.renameGroup(group.id, next)} />
+            <span class="channel-group-count" title={`${group.on} of ${group.found} channels on${group.missing.length ? `. Not found: ${group.missing.join(', ')}` : ''}`}>{group.on}/{group.found}</span>
+            <button class="group-filter" class:active={filterGroups.includes(group.id)} disabled={group.found === 0} aria-pressed={filterGroups.includes(group.id)}
+              title={filterGroups.includes(group.id) ? 'Stop filtering the list to this group' : 'Show only this group in the channel list. Several groups combine (union); the text filter narrows them further.'} onclick={() => toggleGroupFilter(group.id)}>
+              <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M1.5 2h13L9.5 8.5V14l-3-1.5V8.5z" fill="currentColor"/></svg>
+            </button>
+            <button class="measure-chip channel-solo" class:active={group.soloed} disabled={unusable}
+              title="Show only the channels in this group, switching them on if they are off. The other channels keep their settings." onclick={() => $model.soloGroup(group.id)}>Solo</button>
+            {#if group.user}<button class="cells-source-remove" title="Delete this group. Its channels are not changed." aria-label="Delete group {group.name}" onclick={() => $model.removeGroup(group.id)}>×</button>{/if}
+          </div>
+          {#if !isFolded}
+            <div class="transcript-group-options">
+              <CopyJson text={() => channelGroupsJson([{ name: group.name, members: group.members }])} title="Copy the settings.json lines that define this group" />
             </div>
-            {#if group.missing.length}<div class="measure-note">{group.name}: not found — {group.missing.join(', ')}</div>{/if}
-          {/each}
-          {#if !$model.composite}<div class="measure-note">Turn on Composite to use groups.</div>{/if}
-        </details>
-      {/if}
+          {/if}
+          {#if group.missing.length}<div class="measure-note">{group.name}: not found — {group.missing.join(', ')}</div>{/if}
+        {/each}
+        {#if $model.groups.length && !$model.composite}<div class="measure-note">Turn on Composite to use groups.</div>{/if}
+        <div class="transcript-new">
+          <button class="measure-button" title={filtering() ? 'Make a group of the filtered channels that are switched on' : 'Make a group of the channels that are switched on'} onclick={() => (groupMessage = $model.groupFromSelected(scope()))}>From selected channels</button>
+          <CopyJson chip={false} label="Copy all as JSON" disabled={$model.groups.length === 0} text={() => channelGroupsJson($model.groups.map(group => ({ name: group.name, members: group.members })))} title="Copy the settings.json lines that define every group here" />
+        </div>
+        {#if groupMessage}<div class="measure-note cells-source-error">{groupMessage}</div>{/if}
+      </details>
       <div class="channel-search">
         <input type="search" class="measure-input" placeholder="Filter channels…" aria-label="Filter channels by name" bind:value={query}>
         {#if filtering()}<span class="channel-group-count">{shownCount()}/{$model.planes.length}</span><button class="measure-chip" title="Clear the text and group filters" onclick={clearFilters}>Clear</button>{/if}

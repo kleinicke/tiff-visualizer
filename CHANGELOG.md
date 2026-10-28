@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Xenium transcripts load as soon as the viewer opens (no Load transcripts button). Gene and channel groups can be made from the ticked genes or channels (From selected genes / From selected channels) and renamed by double-clicking their names; the New group form is removed. Channel groups can be folded, and channel and gene groups have Copy as JSON (one group or all) for settings.json. Groups added to or edited in settings.json (`tiffVisualizer.channels.groups`, `tiffVisualizer.transcripts.groups`) appear in an open Xenium viewer without reopening it. Fix the Channels Groups section folding when a button in it was used
 - Speed up Xenium transcripts further with a Rust/WebAssembly row-group decoder (zstd, dictionary and float columns decoded straight into typed arrays; about ten times faster than the JavaScript reader, which remains the fallback; the same decoder now reads the cell table and boundary files, several times faster). Row groups are decoded in parallel by worker copies, decoded rows are kept in memory so genes added later need no decoding, and a gene's points are sorted with a radix sort
 - Add SGI RGB image support (`.rgb`, `.rgba`, `.sgi`, `.bw`), including 8/16-bit uncompressed and RLE images.
 - Improve NumPy npy and npz dataset loading and navigation

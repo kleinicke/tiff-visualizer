@@ -16,7 +16,7 @@ import { ChannelsPanel } from './modules/channels-panel.js';
 import { codecWasmModule } from './modules/codec-wasm-wrapper.js';
 import {
 	defaultChannelSettings, parseChannelGroups, resolveChannelGroups, suggestedChannelColors,
-	type ChannelPlane, type ChannelSettings,
+	type ChannelGroupConfig, type ChannelPlane, type ChannelSettings,
 } from './modules/channel-composite.js';
 import { TiffChannelSource } from './modules/scene/channel-source.js';
 import { CellsWorkspace, type CellsWorkspaceHost, type CellsWorkspaceState, type WorkspaceFile } from './modules/cells/cells-workspace.js';
@@ -92,11 +92,14 @@ function applySolo(indices: number[] | null): void {
 
 function soloIndices(): readonly number[] | null {
 	if (soloGroup) {
-		const group = resolveChannelGroups(parseChannelGroups(startup.channelDefaults?.groups), planes()).find(entry => entry.name === soloGroup);
+		const group = resolveChannelGroups(allGroups(), planes()).find(entry => entry.name === soloGroup);
 		if (group) { return group.positions.map(position => planes()[position].index); }
 	}
 	return soloChannel === null ? null : [soloChannel];
 }
+
+/** The configured groups plus those made in the panel. */
+function allGroups(): ChannelGroupConfig[] { return [...parseChannelGroups(startup.channelDefaults?.groups), ...(panel?.groupConfigs() ?? [])]; }
 
 function planes(): ChannelPlane[] { return viewer?.overviewPlanes ?? []; }
 
@@ -216,7 +219,7 @@ async function start(manifest: SceneManifest): Promise<void> {
 			onChange: () => { viewer?.invalidate(); persist(); },
 			getCells: () => workspace?.snapshot(cellsStatus) ?? null,
 			getTranscripts: () => transcripts?.snapshot() ?? null,
-			getGroups: () => resolveChannelGroups(parseChannelGroups(startup.channelDefaults?.groups), planes()),
+			getGroups: () => resolveChannelGroups(allGroups(), planes()),
 			getGroupSolo: () => soloGroup,
 			setGroupSolo: name => {
 				soloGroup = name;
@@ -243,8 +246,7 @@ async function start(manifest: SceneManifest): Promise<void> {
 				notify: () => { panel?.render(); persist(); },
 			}, manifest.pixelSizeUm, parseTranscriptGroups(startup.transcriptGroups));
 			transcripts.restore(restorable?.transcripts);
-			// A big file is only read when asked for, unless the last session already had genes on.
-			if (transcripts.wanted) { void transcripts.load(); }
+			void transcripts.load();
 		}
 		panel.render();
 		void loadCells(manifest, workspace, restorable?.cells);
@@ -259,6 +261,13 @@ window.addEventListener('message', event => {
 	const message = event.data;
 	if (message?.type === 'scene' && message.manifest) { void start(message.manifest as SceneManifest); }
 	else if (message?.type === 'error') { showStatus(String(message.message || 'The bundle could not be opened.'), true); }
+	else if (message?.type === 'settings') {
+		startup.channelDefaults = message.channelDefaults as ChannelDefaults;
+		startup.transcriptGroups = message.transcriptGroups;
+		if (soloGroup !== null && !allGroups().some(group => group.name === soloGroup)) { soloGroup = null; applySolo(null); viewer?.invalidate(); }
+		transcripts?.setDefinitions(parseTranscriptGroups(startup.transcriptGroups));
+		panel?.render();
+	}
 	else if (message?.type === 'toggleChannels') { panel?.toggle(); }
 	else if (message?.type === 'cellSource') {
 		const pending = pendingRequests.get(message.requestId);

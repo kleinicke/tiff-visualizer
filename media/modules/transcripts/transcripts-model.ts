@@ -17,6 +17,8 @@ export interface TranscriptGeneRow {
 export interface TranscriptGroupRow {
 	name: string;
 	color: string;
+	/** The genes the group names, as written. */
+	genes: string[];
 	/** Genes the group names, and how many of them the file has. */
 	total: number;
 	found: number;
@@ -29,6 +31,8 @@ export interface TranscriptGroupRow {
 	setColor: (color: string) => void;
 	setPalette: (palette: boolean) => void;
 	toggleFilter: () => void;
+	/** Rename the group; returns why not, or null when done. */
+	rename: (name: string) => string | null;
 	/** Take this group's genes out of the gene list. */
 	removeAll: () => void;
 	/** Take the group out of the viewer (its genes stay listed). */
@@ -58,9 +62,9 @@ export interface TranscriptsPanelModel {
 	load: () => void;
 	addGene: (name: string) => void;
 	addGroup: (name: string) => void;
-	createGroup: (name: string, genes: string) => string | null;
+	/** Make a group of the genes that are switched on; `names` limits it to the genes the panel's filters leave showing. Returns why not, or null. */
+	groupFromSelected: (names?: string[]) => string | null;
 	/** `names` limits these to the genes the panel's filters leave showing; omitted means every gene in the list. */
-	groupFromListed: (name: string, names?: string[]) => string | null;
 	removeListed: (names?: string[]) => void;
 	showAllListed: (visible: boolean, names?: string[]) => void;
 	clearFilter: () => void;

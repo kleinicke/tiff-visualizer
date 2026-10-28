@@ -3363,20 +3363,20 @@ body img {
 	padding: 2px 0 6px 28px;
 }
 
-.transcript-new,
-.transcript-create {
+.transcript-new {
 	display: flex;
 	gap: 6px;
 	margin-top: 6px;
 }
 
-.transcript-create {
-	flex-direction: column;
+.group-rename {
+	flex: 1;
+	min-width: 0;
+	padding: 0 4px;
 }
 
-.transcript-create textarea {
-	resize: vertical;
-	font-family: inherit;
+.group-rename.invalid {
+	outline: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
 }
 
 .transcript-genes {

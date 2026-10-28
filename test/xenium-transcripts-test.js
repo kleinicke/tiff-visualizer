@@ -26,6 +26,11 @@ async function load(file) {
 		assert.deepStrictEqual([...orderByX(xs)], expected, 'the radix sort orders like a stable comparison sort');
 	}
 
+	const { channelGroupsJson, transcriptGroupsJson } = await load('media/modules/groups-json.ts');
+	assert.strictEqual(transcriptGroupsJson([{ name: 'Epi', genes: ['EPCAM', 'KRT8'], color: '#ff0000' }]), '"tiffVisualizer.transcripts.groups": {\n\t"Epi": { "genes": ["EPCAM", "KRT8"], "color": "#ff0000" }\n}');
+	assert.strictEqual(channelGroupsJson([{ name: 'T "cells"', members: ['CD3e', 2] }, { name: 'B', members: [] }]), '"tiffVisualizer.channels.groups": {\n\t"T \\"cells\\"": ["CD3e", 2],\n\t"B": []\n}');
+	assert.deepStrictEqual(JSON.parse(`{${channelGroupsJson([{ name: 'A', members: ['x'] }])}}`), { 'tiffVisualizer.channels.groups': { A: ['x'] } }, 'the lines parse once wrapped in braces');
+
 	const { paletteColor } = await load('media/modules/transcripts/transcript-colors.ts');
 	const colours = new Set(Array.from({ length: 30 }, (_v, index) => paletteColor('#ff6b6b', index)));
 	assert.strictEqual(colours.size, 30);
@@ -91,9 +96,21 @@ async function load(file) {
 	model.groups[0].removeAll();
 	model = workspace.snapshot();
 	assert.deepStrictEqual(model.genes.map(gene => gene.name), ['C']);
-	model.createGroup("Mine", "a, C\nQ");
+	assert.strictEqual(model.groupFromSelected(), null);
 	model = workspace.snapshot();
-	assert.ok(model.groups.some(group => group.name === 'Mine' && group.found === 2 && group.missing.length === 1));
+	assert.ok(model.groups.some(group => group.name === 'Group 3' && group.found === 1), 'a group of the genes that are on');
+	model.genes[0].setVisible(false);
+	assert.ok(workspace.snapshot().groupFromSelected(), 'nothing switched on, nothing to group');
+	model = workspace.snapshot();
+	assert.strictEqual(model.groups.find(group => group.name === 'Group 3').rename('Epi'), 'There is already a group called Epi.');
+	assert.strictEqual(model.groups.find(group => group.name === 'Group 3').rename('Mine'), null);
+	model = workspace.snapshot();
+	assert.ok(model.groups.some(group => group.name === 'Mine' && group.found === 1));
+	workspace.setDefinitions([{ name: 'Epi', genes: ['A'], color: '#123456' }, { name: 'Fresh', genes: ['B'], color: '#abcdef' }]);
+	model = workspace.snapshot();
+	assert.deepStrictEqual(model.groupChoices.map(group => group.name), ['Fresh'], 'a group added to settings is offered; one removed from settings is gone');
+	assert.ok(model.groups.some(group => group.name === 'Epi' && group.total === 1 && group.color === '#123456'), 'a known group follows its new definition');
+	assert.ok(model.groups.some(group => group.name === 'Mine'), 'panel-made groups stay');
 	const state = workspace.getState();
 	const again = new TranscriptsWorkspace(host, 1, []);
 	await again.load();

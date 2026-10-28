@@ -62,7 +62,6 @@ export class TranscriptsWorkspace {
 	private fetching = new Set<string>();
 	private reading: Promise<void> | null = null;
 	private readProgress: string | null = null;
-	private lowerIndex = new Map<string, string>();
 	private status: TranscriptsPanelModel['status'];
 	private message: string | null = null;
 	private groups: Group[];
@@ -81,9 +80,6 @@ export class TranscriptsWorkspace {
 
 	get loaded(): boolean { return this.index !== null; }
 
-	/** Whether there is anything worth loading the file for on start-up. */
-	get wanted(): boolean { return this.genes.length > 0 || this.groups.some(group => group.added); }
-
 	/** Resolves when no gene positions are being read (for tests). */
 	async settled(): Promise<void> { while (this.reading) { await this.reading; } }
 
@@ -95,7 +91,7 @@ export class TranscriptsWorkspace {
 		this.host.notify();
 		this.loading = this.host.open((done, total) => { this.message = `Reading gene names… ${done} of ${total}`; this.host.notify(); }).then(index => {
 			this.index = index;
-			index.genes.forEach((gene, position) => { this.geneIndex.set(gene, position); this.lowerIndex.set(gene.toLowerCase(), gene); });
+			index.genes.forEach((gene, position) => { this.geneIndex.set(gene, position); });
 			this.status = 'ready';
 			this.message = null;
 			this.layer.setMinQv(this.minQv);
@@ -159,6 +155,19 @@ export class TranscriptsWorkspace {
 		this.host.notify();
 	}
 
+	/** The groups from settings changed: add new ones, update the genes and colours of known ones, drop those that were removed. */
+	setDefinitions(definitions: TranscriptGroupDefinition[]): void {
+		const wanted = new Set(definitions.map(definition => definition.name));
+		for (const definition of definitions) {
+			const existing = this.group(definition.name);
+			if (!existing) { this.groups.push({ ...definition, palette: false, added: false, user: false }); }
+			else if (!existing.user) { existing.genes = definition.genes; existing.color = definition.color; }
+		}
+		this.groups = this.groups.filter(group => group.user || wanted.has(group.name));
+		this.filter = this.filter.filter(name => this.group(name));
+		this.sync();
+	}
+
 	// --- changes ------------------------------------------------------------
 
 	private ensure(name: string, visible: boolean): void {
@@ -167,23 +176,27 @@ export class TranscriptsWorkspace {
 		this.genes.push({ name, visible, color: GENE_COLORS[this.genes.length % GENE_COLORS.length] });
 	}
 
-	private resolve(text: string): { found: string[]; missing: string[] } {
-		const found: string[] = [], missing: string[] = [];
-		for (const token of text.split(/[\s,;]+/).filter(Boolean)) {
-			const gene = this.lowerIndex.get(token.toLowerCase()) ?? (this.geneIndex.has(token) ? token : undefined);
-			const into = gene ?? token;
-			if (!(gene ? found : missing).includes(into)) { (gene ? found : missing).push(into); }
-		}
-		return { found, missing };
+	/** A group of the given genes, named Group N. */
+	private createFromSelected(only?: string[]): string | null {
+		const limit = only && new Set(only);
+		const genes = this.genes.filter(gene => gene.visible && (!limit || limit.has(gene.name))).map(gene => gene.name);
+		if (genes.length === 0) { return 'Switch on at least one gene first.'; }
+		let number = this.groups.length + 1;
+		while (this.groups.some(group => group.name === `Group ${number}`)) { number++; }
+		this.groups.push({ name: `Group ${number}`, genes, color: GROUP_COLORS[this.groups.length % GROUP_COLORS.length], palette: false, added: true, user: true });
+		this.sync();
+		return null;
 	}
 
-	private createFrom(name: string, text: string): string | null {
+	private rename(group: Group, name: string): string | null {
 		const clean = name.trim();
 		if (!clean) { return 'Name the group.'; }
-		if (this.groups.some(group => group.name === clean)) { return `There is already a group called ${clean}.`; }
-		const { found, missing } = this.resolve(text);
-		if (found.length + missing.length === 0) { return 'Name at least one gene.'; }
-		this.groups.push({ name: clean, genes: [...found, ...missing], color: GROUP_COLORS[this.groups.length % GROUP_COLORS.length], palette: false, added: true, user: true });
+		if (clean === group.name) { return null; }
+		if (this.groups.some(other => other !== group && other.name === clean)) { return `There is already a group called ${clean}.`; }
+		this.filter = this.filter.map(entry => entry === group.name ? clean : entry);
+		group.name = clean;
+		// A renamed group is saved with the session, whatever defined it.
+		group.user = true;
 		this.sync();
 		return null;
 	}
@@ -208,7 +221,7 @@ export class TranscriptsWorkspace {
 		const visible = new Set(this.genes.filter(gene => gene.visible).map(gene => gene.name));
 		const on = found.filter(gene => visible.has(gene)).length;
 		return {
-			name: group.name, color: group.color, total: group.genes.length, found: found.length, on,
+			name: group.name, color: group.color, genes: [...group.genes], total: group.genes.length, found: found.length, on,
 			missing: this.index ? group.genes.filter(gene => !this.geneIndex.has(gene)) : [],
 			state: on === 0 ? 'none' : on === found.length ? 'all' : 'some',
 			palette: group.palette, filtering: this.filter.includes(group.name),
@@ -222,6 +235,7 @@ export class TranscriptsWorkspace {
 			},
 			setColor: color => { group.color = color; this.sync(); },
 			setPalette: palette => { group.palette = palette; this.sync(); },
+			rename: name => this.rename(group, name),
 			toggleFilter: () => { this.filter = this.filter.includes(group.name) ? this.filter.filter(name => name !== group.name) : [...this.filter, group.name]; this.sync(); },
 			removeAll: () => { const members = new Set(group.genes); this.genes = this.genes.filter(gene => !members.has(gene.name)); this.sync(); },
 			remove: () => {
@@ -256,8 +270,7 @@ export class TranscriptsWorkspace {
 			load: () => { void this.load(); },
 			addGene: name => { this.ensure(name, true); this.sync(); },
 			addGroup: name => { const group = this.group(name); if (group) { group.added = true; void this.load(); this.sync(); } },
-			createGroup: (name, text) => this.createFrom(name, text),
-			groupFromListed: (name, names) => this.createFrom(name, (names ?? this.genes.map(gene => gene.name)).join(' ')),
+			groupFromSelected: names => this.createFromSelected(names),
 			removeListed: names => { const drop = names && new Set(names); this.genes = drop ? this.genes.filter(gene => !drop.has(gene.name)) : []; this.sync(); },
 			showAllListed: (visible, only) => {
 				const names = new Set(only ?? listed.map(gene => gene.name));
