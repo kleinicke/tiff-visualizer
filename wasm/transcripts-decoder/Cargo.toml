@@ -1,0 +1,26 @@
+[package]
+name = "transcripts-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "Decodes the columns of a Xenium transcripts.parquet row group straight into typed arrays"
+license = "MIT"
+repository = "https://github.com/kleinicke/tiff-visualizer"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# One zstd decoder is linked in.
+#
+# `pure-zstd` (default) is ruzstd: pure Rust, builds anywhere, but it decodes
+# at roughly a fifth of the speed of the reference decoder. `c-zstd` links the
+# reference decoder (zstd-sys) and needs a C compiler that targets wasm32, for
+# example clang: `CC_wasm32_unknown_unknown=/path/to/clang`. See
+# `npm run build:wasm:transcripts:fast`. Both produce the same output.
+[features]
+default = ["pure-zstd"]
+pure-zstd = ["dep:ruzstd"]
+c-zstd = ["dep:zstd-sys"]
+
+[dependencies]
+ruzstd = { version = "0.8", optional = true }
+zstd-sys = { version = "2", optional = true, default-features = false }

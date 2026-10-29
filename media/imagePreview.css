@@ -2760,7 +2760,8 @@ body img {
 	user-select: none;
 }
 
-.channels-header {
+.channels-header,
+.cells-header {
 	display: flex;
 	align-items: center;
 	gap: 8px;
@@ -2770,9 +2771,122 @@ body img {
 	border-radius: 6px 6px 0 0;
 }
 
-.channels-title {
+.channels-title,
+.cells-title {
 	font-weight: 600;
 	font-size: 13px;
+}
+
+/* The Cells section is a second header-and-body block in the Channels window. */
+.cells-section {
+	display: flex;
+	flex-direction: column;
+	flex: 0 1 auto;
+	min-height: 0;
+	border-top: 1px solid var(--vscode-panel-border, #3c3c3c);
+}
+
+.cells-header {
+	border-radius: 0 0 6px 6px;
+	border-bottom: none;
+}
+
+.cells-section:has(.cells-body) > .cells-header {
+	border-radius: 0;
+	border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
+}
+
+.cells-body {
+	text-align: left;
+	overflow-y: auto;
+	max-height: 50vh;
+	padding: 8px 12px 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.cells-toggle {
+	display: flex;
+	gap: 4px;
+}
+
+.cells-toggle .measure-chip {
+	flex: 1;
+}
+
+.cells-field {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.cells-field > span {
+	flex: 0 0 auto;
+}
+
+.cells-field > select {
+	flex: 1;
+	min-width: 0;
+}
+
+.cells-legend-tools {
+	display: flex;
+	gap: 4px;
+	margin-bottom: 6px;
+}
+
+.cells-legend-list {
+	max-height: 180px;
+	overflow-y: auto;
+}
+
+.cells-legend-row.dimmed {
+	opacity: 0.5;
+}
+
+.cells-colormap {
+	width: 100%;
+	margin-top: 4px;
+}
+
+.cells-selection-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-weight: 600;
+	margin-bottom: 4px;
+}
+
+.cells-kv-list {
+	max-height: 200px;
+	overflow-y: auto;
+}
+
+.cells-kv {
+	display: flex;
+	gap: 8px;
+	justify-content: space-between;
+	font-size: 11px;
+	padding: 1px 0;
+}
+
+.cells-kv-label {
+	text-align: left;
+	flex: 0 1 45%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+.cells-kv-value {
+	flex: 1 1 55%;
+	text-align: right;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--vscode-editor-font-family, monospace);
 }
 
 .channels-spacer {
@@ -2996,4 +3110,345 @@ body img {
 	font-size: 11px;
 	pointer-events: none;
 	z-index: 1000;
+}
+
+.range-slider {
+	margin-top: 4px;
+	--range-thumb: 10px;
+}
+
+.range-body {
+	padding: 0 calc(var(--range-thumb) / 2);
+}
+
+.range-histogram {
+	display: block;
+	width: 100%;
+	height: 32px;
+	color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+.range-track {
+	position: relative;
+	height: 16px;
+	cursor: pointer;
+	touch-action: none;
+}
+
+.range-rail,
+.range-fill {
+	position: absolute;
+	top: 6px;
+	height: 4px;
+	border-radius: 2px;
+}
+
+.range-rail {
+	left: 0;
+	right: 0;
+	background: var(--vscode-input-background, #3c3c3c);
+}
+
+.range-fill {
+	background: var(--vscode-button-background, #0e639c);
+}
+
+.range-handle {
+	position: absolute;
+	top: 1px;
+	width: var(--range-thumb);
+	height: 14px;
+	margin-left: calc(var(--range-thumb) / -2);
+	box-sizing: border-box;
+	border-radius: 3px;
+	background: var(--vscode-button-foreground, #fff);
+	border: 2px solid var(--vscode-button-background, #0e639c);
+	cursor: ew-resize;
+}
+
+.range-handle:focus-visible,
+.range-handle.active {
+	outline: 1px solid var(--vscode-focusBorder, #007fd4);
+}
+
+.range-foot {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 6px;
+	margin-top: 2px;
+}
+
+.range-readout {
+	font-family: var(--vscode-editor-font-family, monospace);
+	font-size: 10px;
+	color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+.range-log {
+	font-size: 10px;
+	padding: 1px 6px;
+}
+
+.cells-add {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+	margin-top: 2px;
+}
+
+.cells-add .measure-input {
+	flex: 1;
+	min-width: 0;
+}
+
+.cells-source-error {
+	color: var(--vscode-errorForeground, #f48771);
+}
+
+.cells-source-list {
+	list-style: none;
+	margin: 6px 0 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+}
+
+.cells-source {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	font-size: 11px;
+	padding: 2px 4px;
+	border-radius: 3px;
+	min-width: 0;
+}
+
+.cells-source.active {
+	background: var(--vscode-list-inactiveSelectionBackground, rgba(255, 255, 255, 0.08));
+}
+
+.cells-source.table {
+	padding-left: 18px;
+}
+
+.cells-source.unavailable .cells-source-name,
+.cells-source.unavailable .cells-source-detail {
+	opacity: 0.6;
+}
+
+.cells-source-swatch {
+	width: 16px;
+	height: 16px;
+	padding: 0;
+	border: none;
+	background: none;
+	flex: none;
+}
+
+.cells-source-name {
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	background: none;
+	border: none;
+	padding: 0;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.cells-source-name.plain {
+	cursor: default;
+}
+
+.cells-source.active .cells-source-name {
+	font-weight: 600;
+}
+
+.cells-source-kind {
+	flex: none;
+	font-size: 9px;
+	text-transform: uppercase;
+	color: var(--vscode-descriptionForeground, #9d9d9d);
+}
+
+.cells-source-detail {
+	flex: 1 1 0;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--vscode-descriptionForeground, #9d9d9d);
+	text-align: right;
+}
+
+.cells-source-remove {
+	flex: none;
+	background: none;
+	border: none;
+	color: var(--vscode-descriptionForeground, #9d9d9d);
+	cursor: pointer;
+	font-size: 14px;
+	line-height: 1;
+	padding: 0 2px;
+}
+
+.cells-source-remove:hover {
+	color: var(--vscode-foreground, #ccc);
+}
+
+.cell-set {
+	border-top: 1px solid var(--vscode-panel-border, #33333380);
+	padding: 6px 0;
+}
+
+.cell-set.dimmed .cell-set-body {
+	opacity: 0.55;
+}
+
+.cell-set-top {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 19px;
+}
+
+.cell-set-body {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin-top: 10px;
+	padding: 0 0 6px 4px;
+}
+
+.cells-tables {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.cells-table-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 11px;
+	min-height: 22px;
+	min-width: 0;
+}
+
+.cells-table-row.unavailable .cells-source-name,
+.cells-table-row.unavailable .cells-source-detail {
+	opacity: 0.6;
+}
+
+/* Transcripts section: gene list, group rows, searchable pickers. */
+.transcripts-section .cells-body {
+	max-height: 60vh;
+}
+
+/* The cells body already pads the sides; line the bulk bar up with Groups. */
+.transcripts-section .channels-global {
+	margin: 0 0 6px;
+	padding: 0 0 6px;
+}
+
+.transcript-group-options {
+	display: flex;
+	gap: 6px;
+	padding: 2px 0 6px 28px;
+}
+
+.transcript-new {
+	display: flex;
+	gap: 6px;
+	margin-top: 6px;
+}
+
+.group-rename {
+	flex: 1;
+	min-width: 0;
+	padding: 0 4px;
+}
+
+.group-rename.invalid {
+	outline: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
+}
+
+.transcript-genes {
+	flex-shrink: 0;
+	max-height: 14em;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin-top: 4px;
+}
+
+.transcript-gene.dimmed .channel-name {
+	opacity: 0.5;
+}
+
+.transcript-dot {
+	flex: 0 0 auto;
+	width: 14px;
+	height: 14px;
+	border-radius: 50%;
+	box-sizing: border-box;
+	border: 1px solid var(--vscode-panel-border, #3c3c3c);
+}
+
+.search-picker {
+	position: relative;
+	margin-top: 4px;
+}
+
+.search-picker > input {
+	width: 100%;
+	box-sizing: border-box;
+}
+
+.search-picker-list {
+	position: absolute;
+	z-index: 20;
+	left: 0;
+	right: 0;
+	margin: 2px 0 0;
+	padding: 2px 0;
+	list-style: none;
+	max-height: 14em;
+	overflow-y: auto;
+	background: var(--vscode-dropdown-background, #3c3c3c);
+	border: 1px solid var(--vscode-dropdown-border, #454545);
+	border-radius: 4px;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.search-picker-list li > button {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 3px 8px;
+	background: transparent;
+	border: none;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.search-picker-list li.active > button,
+.search-picker-list li > button:hover {
+	background: var(--vscode-list-hoverBackground, #2a2d2e);
+}
+
+.search-picker-note {
+	padding: 3px 8px;
+	opacity: 0.7;
+	font-size: 11px;
 }

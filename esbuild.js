@@ -1,5 +1,6 @@
 const { build: esbuild, context } = require('esbuild');
 const sveltePlugin = require('./scripts/svelte-plugin.cjs');
+const { patchHyparquetEncoding } = require('./esbuild-hyparquet-patch.js');
 async function build(config) {
   if (isWatch) {
     const ctx = await context(config);
@@ -55,6 +56,41 @@ const webviewBuildOptions = {
   format: 'esm',
   splitting: true,
   minify: !isWatch,
+};
+
+const xeniumViewerBuildOptions = {
+  plugins: [sveltePlugin()],
+  conditions: ['browser'],
+  entryPoints: ['media/xenium-viewer.ts'],
+  bundle: true,
+  outdir: 'media',
+  entryNames: 'xeniumViewer.bundle',
+  platform: 'browser',
+  target: 'es2020',
+  sourcemap: true,
+  format: 'esm',
+  minify: !isWatch,
+};
+
+const xeniumCellsWorkerBuildOptions = {
+  entryPoints: ['media/xenium-cells-worker.ts'],
+  bundle: true,
+  outfile: 'media/xeniumCellsWorker.bundle.js',
+  platform: 'browser',
+  target: 'es2020',
+  sourcemap: true,
+  format: 'esm',
+  plugins: [patchHyparquetEncoding()],
+};
+
+const xeniumTileWorkerBuildOptions = {
+  entryPoints: ['media/xenium-tile-worker.ts'],
+  bundle: true,
+  outfile: 'media/xeniumTileWorker.bundle.js',
+  platform: 'browser',
+  target: 'es2020',
+  sourcemap: true,
+  format: 'esm',
 };
 
 // Build the decode worker (runs format decoders off the webview UI thread).
@@ -196,6 +232,9 @@ function findMediaTsFiles(dir) {
 const mediaModuleTsFiles = [
   ...findMediaTsFiles('media/modules'),
   'media/imagePreview.ts',
+  'media/xenium-viewer.ts',
+  'media/xenium-tile-worker.ts',
+  'media/xenium-cells-worker.ts',
   'media/decode-worker.ts',
   'media/png-decode-worker.ts',
   'media/layered-decode-worker.ts',
@@ -308,6 +347,15 @@ async function buildAll() {
     // Build webview scripts
     await build(webviewBuildOptions);
     console.log('Webview scripts built successfully');
+
+    await build(xeniumViewerBuildOptions);
+    console.log('Xenium viewer built successfully');
+
+    await build(xeniumTileWorkerBuildOptions);
+    console.log('Xenium tile worker built successfully');
+
+    await build(xeniumCellsWorkerBuildOptions);
+    console.log('Xenium cells worker built successfully');
 
     // Build decode worker
     await build(decodeWorkerBuildOptions);
