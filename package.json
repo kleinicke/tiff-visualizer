@@ -459,12 +459,12 @@
           "type": "string",
           "enum": ["auto", "always", "never"],
           "enumDescriptions": [
-            "Open the Cells panel for multichannel OME-TIFF images with a micron scale, which is what fluorescence microscopy looks like. Other images never see it.",
-            "Open the Cells panel for every image.",
-            "Never open the Cells panel by itself. Right-click the image and choose Cells, or run Scientific Image Visualizer: Cells."
+            "Open the Channels panel, which ends in the Cells section, for multichannel OME-TIFF images with a micron scale, which is what fluorescence microscopy looks like. Other images never see it.",
+            "Open the Channels panel with its Cells section for every image.",
+            "Never open it by itself. Right-click the image and choose Cells, or run Scientific Image Visualizer: Cells."
           ],
           "default": "auto",
-          "description": "When the Cells panel opens by itself. It opens once per file, so closing it is not undone as you step through Z or T."
+          "description": "When the Channels panel and its Cells section open by themselves. It opens once per file, so closing it is not undone as you step through Z or T."
         },
         "tiffVisualizer.cells.cellsParquet": {
           "type": "object",

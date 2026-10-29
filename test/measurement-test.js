@@ -954,6 +954,26 @@ async function main() {
 		assert.strictEqual(calibration.calibrationFromTiffTags({}), null);
 	});
 
+	await test('ImageJ TIFFs take their unit from the description', () => {
+		const description = 'ImageJ=1.54f\nimages=3\nunit=\\u00B5m\nspacing=2.0\n';
+		const result = calibration.calibrationFromTiffTags({ t282: 4, t283: 4, t296: 1, t270: description });
+		assert.strictEqual(result.unit, '\u00B5m');
+		close(result.pixelWidth, 0.25, 1e-12, 'ImageJ pixel width');
+		assert.strictEqual(result.origin, 'tiff-resolution');
+		assert.strictEqual(calibration.imageJUnit(description), '\u00B5m');
+		assert.strictEqual(calibration.imageJUnit('ImageJ=1.54f\nunit=pixel\n'), null);
+		assert.strictEqual(calibration.imageJUnit('unit=\\u00B5m'), null, 'only ImageJ descriptions are read');
+		assert.strictEqual(calibration.calibrationFromTiffTags({ t282: 4, t283: 4, t296: 1, t270: 'ImageJ=1.54f\n' }), null);
+		assert.strictEqual(calibration.calibrationFromTiffTags({ t282: 1, t283: 1, t296: 1, t270: description }), null, 'a 1x1 resolution says nothing');
+		close(calibration.calibrationFromTiffTags({ t282: 4, t283: 4, t296: 3, t270: description }).pixelWidth, 0.25, 1e-12, 'cm still wins when declared');
+		assert.strictEqual(calibration.calibrationFromTiffTags({ t282: 4, t283: 4, t296: 3, t270: description }).unit, 'cm');
+		const fromList = calibration.calibrationFromTagList([
+			{ tag: 282, name: 'XResolution', value: '4, 1' }, { tag: 283, name: 'YResolution', value: '4, 1' },
+			{ tag: 296, name: 'ResolutionUnit', value: '1' }, { tag: 270, name: 'ImageDescription', value: description },
+		]);
+		assert.strictEqual(fromList.unit, '\u00B5m');
+	});
+
 	await test('OME physical sizes win over resolution tags', () => {
 		const result = calibration.autoCalibration(
 			{ physicalSizeX: 0.325, physicalSizeY: 0.325, physicalSizeXUnit: 'µm' },

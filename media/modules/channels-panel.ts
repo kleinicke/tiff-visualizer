@@ -32,6 +32,8 @@ export interface ChannelsPanelHost {
 	getGroupSolo?: () => string | null;
 	/** The Cells section, for viewers that have cell outlines; null or absent hides it. */
 	getCells?: () => CellsPanelModel | null;
+	/** Start the All channels and Groups subsections folded. Defaults to true when the host has a Cells section (the Xenium viewer). */
+	compact?: boolean;
 	/** The Transcripts section, for viewers that have transcripts; null or absent hides it. */
 	getTranscripts?: () => TranscriptsPanelModel | null;
 	/** Solo a whole group (or clear it with null). Exclusive with a single-channel solo. */
@@ -71,6 +73,8 @@ export interface ChannelsModel {
   current: number | null;
   groups: ChannelGroupRow[];
   cells: CellsPanelModel | null;
+  /** The section the host asked to show; `id` changes with every request. `exclusive`: the panel was just opened for it, so the other section starts folded. */
+  focus: { section: 'channels' | 'cells'; id: number; exclusive: boolean } | null;
   /** A scene viewer (Xenium): the All channels and Groups subsections start folded. */
   compact: boolean;
   transcripts: TranscriptsPanelModel | null;
@@ -97,6 +101,7 @@ export class ChannelsPanel {
   private userGroups: ChannelGroupConfig[] = [];
   private names = new Map<string, string>();
   private userCounter = 0;
+  private focus: ChannelsModel['focus'] = null;
   /** Groups made in the panel, for the host to resolve alongside the configured ones (members are 1-based positions). */
   groupConfigs(): ChannelGroupConfig[] { return this.userGroups; }
   private shown(id: string): string { return this.names.get(id) ?? id; }
@@ -126,7 +131,7 @@ export class ChannelsPanel {
       visible: this.visible,
       // Only small UI descriptors cross the bridge, never reactive pixel buffers.
       planes: this.planeDescriptors,
-      groups, compact: !!this.host.getCells, cells: readHost ? this.host.getCells?.() ?? null : null, transcripts: readHost ? this.host.getTranscripts?.() ?? null : null, settings, solo: this.host.getSolo(), composite: this.host.isComposite(),
+      groups, focus: this.focus, compact: this.host.compact ?? !!this.host.getCells, cells: readHost ? this.host.getCells?.() ?? null : null, transcripts: readHost ? this.host.getTranscripts?.() ?? null : null, settings, solo: this.host.getSolo(), composite: this.host.isComposite(),
       backend: this.host.getBackend?.() ?? 'cpu', status: this.host.getStatus?.() ?? null,
       current: readHost && !this.host.isComposite() ? this.host.getCurrentChannel?.() ?? null : null, close: () => this.hide(),
       toggleComposite: () => { this.host.setComposite(!this.host.isComposite()); this.render(); },
@@ -203,6 +208,12 @@ export class ChannelsPanel {
     this.host.onChange(); this.render();
   }
   show(): void { this.visible = true; this.render(); }
+  /** Show the panel at one section: a closed panel opens with only that section unfolded, an open one just unfolds it. */
+  reveal(section: 'channels' | 'cells'): void {
+    this.focus = { section, id: (this.focus?.id ?? 0) + 1, exclusive: !this.visible };
+    this.visible = true;
+    this.render();
+  }
   hide(): void { this.visible = false; this.render(); }
   isVisible(): boolean { return this.visible; }
   toggle(): void { if (this.visible) this.hide(); else this.show(); }

@@ -1,8 +1,7 @@
 <script lang="ts">
   import type { CellsPanelModel } from '../../../media/modules/cells/cells-model';
   import CellSet from './CellSet.svelte';
-  let { cells, headless = false }: { cells: CellsPanelModel; headless?: boolean } = $props();
-  let open = $state(true);
+  let { cells, open = $bindable(true) }: { cells: CellsPanelModel; open?: boolean } = $props();
   let text = $state('');
   function add(event: Event) {
     event.preventDefault();
@@ -12,19 +11,16 @@
   }
 </script>
 <section class="cells-section">
-  {#if !headless}
   <div class="cells-header">
     <button class="channel-fold" aria-expanded={open} title={open ? 'Collapse the Cells section' : 'Expand the Cells section'} onclick={() => (open = !open)}>{open ? '▾' : '▸'}</button>
     <div class="cells-title">Cells</div><div class="channels-spacer"></div>
     {#if cells.sets.length === 1}<span class="channel-group-count">{cells.sets[0].count.toLocaleString()}</span>
     {:else if cells.sets.length > 1}<span class="channel-group-count">{cells.sets.length} sets</span>{/if}
   </div>
-  {/if}
-  {#if open || headless}
+  {#if open}
     <div class="cells-body">
       {#if cells.status && cells.sets.length === 0}<div class="measure-note">{cells.status}</div>{/if}
       {#if cells.sets.length}<div class="cell-sets">{#each cells.sets as set (set.id)}<CellSet {set} />{/each}</div>{/if}
-      {#if cells.sets.length === 0 && !cells.status}<div class="measure-note">No cells are loaded. Add a cell_boundaries.parquet below.</div>{/if}
       {#each cells.pending as row (row.id)}
         <div class="cells-table-row" class:unavailable={row.state === 'missing' || row.state === 'error'} title={row.detail ? `${row.path}\n${row.detail}` : row.path}>
           <span class="cells-source-kind">cells</span>

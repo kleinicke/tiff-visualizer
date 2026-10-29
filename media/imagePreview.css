@@ -2740,7 +2740,10 @@ body img {
    own tint, range and opacity. Same construction as the other floating panels.
 --------------------------------------------------------------------------- */
 
+/* Tweak here: the tallest the Channels list may grow before it scrolls, so the Cells
+   section below it stays in view for long channel lists. */
 .channels-panel {
+	--channels-list-max-height: 40vh;
 	position: fixed;
 	top: 20px;
 	left: 20px;
@@ -2893,8 +2896,10 @@ body img {
 	flex: 1;
 }
 
+/* The Channels list; its height cap is --channels-list-max-height on .channels-panel. */
 .channels-body {
 	overflow-y: auto;
+	max-height: var(--channels-list-max-height);
 	padding: 8px 12px;
 	flex: 1;
 	min-height: 0;
@@ -3453,13 +3458,7 @@ body img {
 	font-size: 11px;
 }
 
-/* Cells: the panel sits on the right so it does not cover the Channels panel, and the
-   overlay is below all chrome (like .measure-overlay) and never takes clicks. */
-.cells-panel {
-	left: auto;
-	right: 20px;
-}
-
+/* Cells overlay: below all chrome (like .measure-overlay) and never takes clicks. */
 .cells-overlay {
 	position: fixed;
 	top: 0;

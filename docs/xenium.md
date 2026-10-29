@@ -135,15 +135,16 @@ Planned: per-channel intensity inside each outline, and loaders for GeoJSON, Ima
 
 The Cells section is not limited to Xenium bundles. In the image viewer, right-click
 and choose **Cells…**, or run **Scientific Image Visualizer: Cells** from the command
-palette, to open it in its own panel. Add a Xenium-style `cell_boundaries.parquet`
+palette, to open the Channels panel, whose last section is Cells (fold it away with
+the arrow, as in the Xenium viewer). Add a Xenium-style `cell_boundaries.parquet`
 (`cell_id`, `vertex_x`, `vertex_y` in microns) by path or with Browse, then Load it.
 Outlines, colouring by a table column and click selection work as in the Xenium viewer.
 
-Opening the panel changes nothing: the overlay is created when the first file is added,
+Showing the section changes nothing: the overlay is created when the first file is added,
 and each image starts without cells. Coordinates are divided by the image's pixel size,
 so the image needs a micron scale (OME-TIFF, TIFF resolution tags or Measure > Set
 scale); without one they are read as pixels and the panel says so.
 
 | Setting | Effect |
 | --- | --- |
-| `tiffVisualizer.cells.autoOpenPanel` | `auto` (default) opens the panel once per file for multichannel OME-TIFF images that have a micron scale. `always` opens it for every image, `never` leaves it to the menu and command. |
+| `tiffVisualizer.cells.autoOpenPanel` | `auto` (default) opens the Channels panel once per file for multichannel OME-TIFF images that have a micron scale. `always` opens it for every image, `never` leaves it to the menu and command. |

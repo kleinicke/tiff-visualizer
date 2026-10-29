@@ -52,7 +52,7 @@ import {
 } from './modules/channel-composite.js';
 import { RoiManager } from './modules/measure/roi-manager.js';
 import { RoiOverlay } from './modules/measure/roi-overlay.js';
-import { autoCalibration, calibrationFromCzi, calibrationFromDicom, calibrationFromTagList } from './modules/measure/calibration.js';
+import { calibrationFromOme, calibrationFromCzi, calibrationFromDicom, calibrationFromTagList } from './modules/measure/calibration.js';
 import { deserializeRoi, parseSidecar, serializeRoi } from './modules/measure/roi-io.js';
 import { toScalarPlane, UNCALIBRATED, type Calibration, type MeasurementSource } from './modules/measure/types.js';
 import type { TagEntry } from './modules/tiff-tag-utils.js';
@@ -86,6 +86,7 @@ import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-reg
 import { PyramidScene } from './modules/pyramid-scene.js';
 import { micronsPerPixel, parseCellsAutoOpen, shouldAutoOpenCells } from './modules/cells/cells-relevance.js';
 import type { ImageCells } from './modules/cells/image-cells.js';
+import type { CellsPanelModel } from './modules/cells/cells-model.js';
 
 /**
  * Main Image Preview Application
@@ -375,7 +376,6 @@ import type { ImageCells } from './modules/cells/image-cells.js';
 	let imageCells: ImageCells | null = null;
 	let imageCellsLoading: Promise<ImageCells> | null = null;
 	let autoCellsResource: string | null = null;
-	let cellsPanelWanted = false;
 	let compositeAuto = false;
 	let channelGeneration = -1;
 	// Sibling pages of an OME/ImageJ stack decode in the background. The panel
@@ -634,6 +634,8 @@ import type { ImageCells } from './modules/cells/image-cells.js';
 			updateTiffPageOverlay();
 			scheduleSaveState();
 		},
+		getCells: () => imageCells ? imageCells.model() : idleCells(),
+		compact: true,
 		getGroups: (): ResolvedChannelGroup[] => resolveChannelGroups(allChannelGroups(), channelPlanes),
 		getGroupSolo: () => channelGroupSolo,
 		setGroupSolo: name => {
@@ -965,7 +967,7 @@ import type { ImageCells } from './modules/cells/image-cells.js';
 		const ome = tiffProcessor.rawTiffData?.ome || null;
 		const fromTags = calibrationFromTagList(tiffProcessor._lastAllTags as TagEntry[] | null);
 		measureCalibration = dicom || czi
-			|| (ome ? autoCalibration(ome, null) : (fromTags || { ...UNCALIBRATED }));
+			|| (ome ? calibrationFromOme(ome) : null) || fromTags || { ...UNCALIBRATED };
 		roiOverlay.scheduleRedraw();
 	}
 
@@ -1042,7 +1044,7 @@ import type { ImageCells } from './modules/cells/image-cells.js';
 				getImageSize: () => _pyramidScene ? { width: _pyramidScene.fullWidth, height: _pyramidScene.fullHeight } : canvas ? { width: canvas.width, height: canvas.height } : null,
 				getMicronsPerPixel: () => micronsPerPixel(measureCalibration),
 				postMessage: message => vscode.postMessage(message),
-				onChange: () => { cellsPanelWanted = cells.isVisible(); scheduleSaveState(); },
+				onChange: () => { channelsPanel.render(); scheduleSaveState(); },
 			});
 			cells.setResource(currentResource());
 			imageCells = cells;
@@ -1051,16 +1053,28 @@ import type { ImageCells } from './modules/cells/image-cells.js';
 		return imageCellsLoading;
 	}
 
-	function toggleCellsPanel(show?: boolean): void {
-		void loadImageCells().then(cells => { if (show === undefined) { cells.toggle(); } else if (show) { cells.show(); } else { cells.hide(); } });
-	}
+	/**
+	 * The Cells section at the end of the Channels panel. Until its first action
+	 * the cells code is not even loaded; the action loads it and then runs.
+	 */
+	const idleCells = (): CellsPanelModel => {
+		const after = (action: (model: CellsPanelModel) => void) => { void loadImageCells().then(cells => action(cells.model())); };
+		return {
+			status: micronsPerPixel(measureCalibration) === null ? 'This image has no micron scale, so cell coordinates are read as pixels.' : null,
+			sets: [], pending: [], sourceMessage: null,
+			addSource: text => after(model => model.addSource(text)),
+			browseSource: () => after(model => model.browseSource()),
+			loadSource: () => undefined,
+			removeSource: () => undefined,
+		};
+	};
 
 	/** Keep cells with their file: a different file starts without them, stepping Z or T does not. */
 	function syncCellsResource(): void {
 		imageCells?.setResource(currentResource());
 	}
 
-	/** Apply `tiffVisualizer.cells.autoOpenPanel`: once per file, and only for images the setting selects. */
+	/** Apply `tiffVisualizer.cells.autoOpenPanel`: show the Channels panel (which ends in the Cells section) once per file, for the images the setting selects. */
 	function applyAutoOpenCells(): void {
 		const resource = currentResource();
 		if (autoCellsResource === resource) { return; }
@@ -1071,7 +1085,8 @@ import type { ImageCells } from './modules/cells/image-cells.js';
 		};
 		if (!shouldAutoOpenCells(parseCellsAutoOpen(settingsManager.settings.cellsAutoOpenPanel), hints)) { return; }
 		autoCellsResource = resource;
-		toggleCellsPanel(true);
+		channelsPanel.reveal('cells');
+		scheduleSaveState();
 	}
 
 	/** Drop measurement caches when the displayed image changes. */
@@ -1662,7 +1677,6 @@ import type { ImageCells } from './modules/cells/image-cells.js';
 		autoCellsResource = typeof persistedState.autoCellsResource === 'string' ? persistedState.autoCellsResource : null;
 		compositeAuto = persistedState.compositeAuto === true;
 		if (persistedState.isChannelsPanelVisible) { channelsPanel.show(); }
-		if (persistedState.isCellsPanelVisible) { cellsPanelWanted = true; toggleCellsPanel(true); }
 		if (Array.isArray(persistedState.layerGroupCollapsed)) {
 			layersPanel.collapsedGroups = new Set(persistedState.layerGroupCollapsed.map(String));
 		}
@@ -1756,7 +1770,6 @@ import type { ImageCells } from './modules/cells/image-cells.js';
 			isDebayerPanelVisible: debayerPanel.isVisible(),
 			isMeasurePanelVisible: measurePanel.isVisible(),
 			isChannelsPanelVisible: channelsPanel.isVisible(),
-			isCellsPanelVisible: imageCells ? imageCells.isVisible() : cellsPanelWanted,
 			// Channel planes are re-derived from the image; only the user's
 			// choices are worth persisting.
 			compositeEnabled,
@@ -4311,7 +4324,9 @@ import type { ImageCells } from './modules/cells/image-cells.js';
 				break;
 
 			case 'toggleCells':
-				toggleCellsPanel();
+				// Opens the Channels panel at the Cells section (or unfolds it).
+				channelsPanel.reveal('cells');
+				scheduleSaveState();
 				break;
 
 			case 'cellSource':
@@ -5226,18 +5241,13 @@ import type { ImageCells } from './modules/cells/image-cells.js';
 			}));
 
 			if (hasCompositableChannels()) {
-				displayItems.push(createMenuItem(
-					channelsPanel.isVisible() ? 'Close Channels Panel' : 'Channels…',
-					() => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleChannels' }); },
-				));
+				// Opens the panel at the Channels section, or unfolds it when the panel is already open.
+				displayItems.push(createMenuItem('Channels…', () => { channelsPanel.reveal('channels'); scheduleSaveState(); }));
 			}
 
 			// One entry like Measure. The panel is empty until a segmentation is
 			// added, so an image nobody asks cells for is unchanged.
-			measureItems.push(createMenuItem(
-				imageCells?.isVisible() ? 'Close Cells Panel' : 'Cells…',
-				() => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleCells' }); },
-			));
+			measureItems.push(createMenuItem('Cells…', () => { channelsPanel.reveal('cells'); scheduleSaveState(); }));
 
 			// Measurement is one entry, not a submenu of eleven: the tools live
 			// inside the panel, so the menu stays as short as it is today.
