@@ -20,7 +20,7 @@ export interface ImageCellsHost {
 	getMicronsPerPixel: () => number | null;
 	/** `tiffVisualizer.cells.cellIdCol`: other names for the cell id column. */
 	getIdColumns: () => string[];
-	postMessage: (message: { type: 'resolveCell'; requestId: number; text: string } | { type: 'browseCell'; requestId: number }) => void;
+	postMessage: (message: { type: 'resolveCell'; requestId: number; text: string } | { type: 'browseCell'; requestId: number } | { type: 'configuredCells'; resource: string }) => void;
 	/** The workspace changed: re-render the panel and save state. */
 	onChange: () => void;
 }
@@ -57,6 +57,13 @@ export class ImageCells {
 		if (!request) { return; }
 		if (message.error) { request.reject(new Error(message.error)); }
 		else { request.resolve(message.cancelled || !message.spec ? null : message.spec as WorkspaceFile); }
+	}
+
+	/** The extension's reply listing the files settings.json names for this image: show them in the Cells section, ready to Load. A reply for a file that is no longer open is ignored. */
+	onConfigured(resource: string, specs: readonly unknown[]): void {
+		if (resource !== this.resource || specs.length === 0) { return; }
+		this.ensure().addConfigured(specs as WorkspaceFile[]);
+		this.host.onChange();
 	}
 
 	dispose(): void { this.overlay.clear(); }
