@@ -38,7 +38,8 @@ export type HostToViewerMessage = AutomationRequest | MessageMap<{
   /** The collection's next image, pushed on request once the current one has loaded. */
   prefetchSource: { uri: string; token: string; size: number; mtime: number };
   switchToDatasetPlane: { uri: string; resourceUri: string; formatHint?: string; seriesIndex?: number; coordinates?: Record<string, number>; pageIndex?: number; frameIndex?: number };
-  toggleHistogram: Empty; toggleMetadata: Empty; toggleScaleBar: { shown?: boolean }; toggleChannels: Empty; toggleMeasure: Empty;
+  toggleHistogram: Empty; toggleMetadata: Empty; toggleScaleBar: { shown?: boolean }; toggleChannels: Empty; toggleCells: Empty; toggleMeasure: Empty;
+  cellSource: { requestId: number; spec?: unknown; error?: string; cancelled?: boolean };
   measureHint: { text: string }; measureImportResult: { kind: 'imagej' | 'sidecar'; bytes: number[]; fileName?: string; automatic?: boolean };
   restoreHistogramState: { isVisible: boolean; scaleMode?: 'linear' | 'sqrt'; position?: { left: number; top: number } };
   requestHistogram: Empty; convertColormapToFloat: { colormap: string; min: number; max: number; inverted?: boolean; logarithmic?: boolean };
@@ -74,6 +75,7 @@ export type ViewerToHostMessage = MessageMap<{
   comparisonStateResponse: { state: { peerUris: string[]; isShowingPeer: boolean } };
   measureVisibilityChanged: { isVisible: boolean }; histogramVisibilityChanged: { isVisible: boolean };
   metadataVisibilityChanged: { isVisible: boolean }; channelsVisibilityChanged: { isVisible: boolean };
+  resolveCell: { requestId: number; text: string }; browseCell: { requestId: number };
 }>;
 
 function record(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }

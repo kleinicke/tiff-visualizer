@@ -30,6 +30,7 @@ interface WebviewImageSettings extends ImageSettings {
 	fitUpscale: boolean;
 	navigationShortcuts: Record<string, string[]>;
 	channelDefaults: ChannelDefaults;
+	cellsAutoOpenPanel: 'auto' | 'always' | 'never';
 	/** Experimental rectangle reads; see the setting's description. */
 	experimentalRegionDecode: boolean;
 }
@@ -230,6 +231,7 @@ export class ImagePreview extends MediaPreview {
 				scrollToZoom: this.getScrollToZoom(),
 				fitUpscale: this.getFitUpscale(),
 				channelDefaults: this.getChannelDefaults(),
+				cellsAutoOpenPanel: this.getCellsAutoOpenPanel(),
 				experimentalRegionDecode: this.getRegionDecodeEnabled()
 			};
 
@@ -253,7 +255,8 @@ export class ImagePreview extends MediaPreview {
 				|| e.affectsConfiguration('tiffVisualizer.experimentalRegionDecode')
 				|| e.affectsConfiguration('tiffVisualizer.scrollToZoom')
 				|| e.affectsConfiguration('tiffVisualizer.fitUpscale')
-				|| e.affectsConfiguration('tiffVisualizer.channels')) {
+				|| e.affectsConfiguration('tiffVisualizer.channels')
+				|| e.affectsConfiguration('tiffVisualizer.cells.autoOpenPanel')) {
 				updateSettings('configuration-changed');
 			}
 		}));
@@ -414,6 +417,7 @@ export class ImagePreview extends MediaPreview {
 			scrollToZoom: this.getScrollToZoom(),
 			fitUpscale: this.getFitUpscale(),
 			channelDefaults: this.getChannelDefaults(),
+			cellsAutoOpenPanel: this.getCellsAutoOpenPanel(),
 			experimentalRegionDecode: this.getRegionDecodeEnabled()
 		};
 
@@ -444,6 +448,11 @@ export class ImagePreview extends MediaPreview {
 			colorsByNumber: config.get<Record<string, string>>('colorsByNumber', {}),
 			groups: config.get<Record<string, unknown>>('groups', {}),
 		};
+	}
+
+	private getCellsAutoOpenPanel(): 'auto' | 'always' | 'never' {
+		const value = vscode.workspace.getConfiguration('tiffVisualizer.cells').get<string>('autoOpenPanel', 'auto');
+		return value === 'always' || value === 'never' ? value : 'auto';
 	}
 
 	private getRegionDecodeEnabled(): boolean {
@@ -539,6 +548,12 @@ export class ImagePreview extends MediaPreview {
 	public toggleChannels(): void {
 		if (this.previewState === PreviewState.Active) {
 			this.postViewerMessage({ type: 'toggleChannels' });
+		}
+	}
+
+	public toggleCells(): void {
+		if (this.previewState === PreviewState.Active) {
+			this.postViewerMessage({ type: 'toggleCells' });
 		}
 	}
 
@@ -1285,7 +1300,8 @@ export class ImagePreview extends MediaPreview {
 			gpuAcceleration: this.getGpuAccelerationEnabled(),
 			scrollToZoom: this.getScrollToZoom(),
 			fitUpscale: this.getFitUpscale(),
-			channelDefaults: this.getChannelDefaults()
+			channelDefaults: this.getChannelDefaults(),
+			cellsAutoOpenPanel: this.getCellsAutoOpenPanel()
 		};
 
 		const nonce = getNonce();
@@ -1329,6 +1345,9 @@ export class ImagePreview extends MediaPreview {
 		const layeredPreviewFallbackUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'layeredPreviewFallback.bundle.js'));
 		const layerDocumentWriterUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'layerDocumentWriter.bundle.js'));
 		const imagejRoiUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'imagejRoi.bundle.js'));
+		// Named here so the Cells panel can read a segmentation; nothing fetches either until a file is added.
+		const cellsWorkerUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'xeniumCellsWorker.bundle.js'));
+		const transcriptsWasmUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'wasm', 'transcripts-wasm.wasm'));
 		const vendorAssets = {
 			wasm: wasmUri.toString(),
 			workers: {
@@ -1336,7 +1355,9 @@ export class ImagePreview extends MediaPreview {
 				'fastRawWorker.bundle.js': fastRawWorkerUri.toString(),
 				'layeredDecodeWorker.bundle.js': layeredDecodeWorkerUri.toString(),
 				'pngDecodeWorker.bundle.js': pngDecodeWorkerUri.toString(),
+				'xeniumCellsWorker.bundle.js': cellsWorkerUri.toString(),
 			},
+			transcriptsWasm: transcriptsWasmUri.toString(),
 			jxlWasm: jxlWasmUri.toString(),
 			codecWasm: codecWasmUri.toString(),
 			geotiff: geotiffUri.toString(),
