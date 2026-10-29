@@ -117,7 +117,7 @@
       </label>
       <label class="cells-field">
         <span>Dot size</span>
-        <input type="range" min="50" max="400" class="channel-slider" value={Math.round(transcripts.size * 100)} oninput={e => transcripts.setSize(Number(e.currentTarget.value) / 100)}>
+        <input type="range" min="50" max="600" class="channel-slider" value={Math.round(transcripts.size * 100)} oninput={e => transcripts.setSize(Number(e.currentTarget.value) / 100)}>
       </label>
       <label class="cells-field">
         <span>Dot opacity</span>

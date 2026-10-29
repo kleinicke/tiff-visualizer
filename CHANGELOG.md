@@ -2,8 +2,9 @@
 
 ## Unreleased
 
+- Xenium transcripts: larger default and maximum dot size, more opaque dots when zoomed out, and panel genes with no transcripts are listed in Add a gene with a count of 0
 - Add a Dot opacity slider to the Xenium Transcripts section
-- Keep Xenium transcript brightness the same at every zoom: dots under two pixels wide, and crowded views, are shaded from the ink the true-size dots would cover instead of being drawn enlarged or thinned
+- Simplify Xenium transcript drawing: dots are always drawn individually at a zoom-following size (2 px minimum, 7 px maximum before Dot size), with no density-image fallback
 - Xenium transcripts load as soon as the viewer opens (no Load transcripts button). Gene and channel groups can be made from the ticked genes or channels (From selected genes / From selected channels) and renamed by double-clicking their names; the New group form is removed. Channel groups can be folded, and channel and gene groups have Copy as JSON (one group or all) for settings.json. Groups added to or edited in settings.json (`tiffVisualizer.channels.groups`, `tiffVisualizer.transcripts.groups`) appear in an open Xenium viewer without reopening it. Fix the Channels Groups section folding when a button in it was used
 - Speed up Xenium transcripts further with a Rust/WebAssembly row-group decoder (zstd, dictionary and float columns decoded straight into typed arrays; about ten times faster than the JavaScript reader, which remains the fallback; the same decoder now reads the cell table and boundary files, several times faster). Row groups are decoded in parallel by worker copies, decoded rows are kept in memory so genes added later need no decoding, and a gene's points are sorted with a radix sort
 - Add SGI RGB image support (`.rgb`, `.rgba`, `.sgi`, `.bw`), including 8/16-bit uncompressed and RLE images.

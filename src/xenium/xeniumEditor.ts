@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { Utils } from 'vscode-uri';
 import type { ChannelDefaults } from '../../shared/viewer-settings';
 import {
-	buildSceneManifest, discoverCellFiles, discoverChannelFiles, expandSampleName, folderOf, isAbsolutePath, parseExperiment, sourceNameFromPath,
+	buildSceneManifest, discoverCellFiles, discoverChannelFiles, expandSampleName, folderOf, isAbsolutePath, parseExperiment, parseGenePanel, sourceNameFromPath,
 	type CellSourceSpec,
 } from '../../media/modules/scene/xenium-manifest';
 import { escapeAttribute, getNonce } from '../util/dom';
@@ -89,6 +89,9 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 			const rootEntries = await vscode.workspace.fs.readDirectory(bundleFolder);
 			manifest.cells = discoverCellFiles(rootEntries.filter(([, type]) => (type & vscode.FileType.File) !== 0).map(([name]) => name), toSrc);
 			if (rootEntries.some(([name, type]) => name === 'transcripts.parquet' && (type & vscode.FileType.File) !== 0)) { manifest.transcripts = toSrc('transcripts.parquet'); }
+			if (manifest.transcripts && rootEntries.some(([name, type]) => name === 'gene_panel.json' && (type & vscode.FileType.File) !== 0)) {
+				try { manifest.genePanel = parseGenePanel(new TextDecoder('utf-8').decode(await vscode.workspace.fs.readFile(Utils.joinPath(bundleFolder, 'gene_panel.json')))); } catch { /* the gene list works without it */ }
+			}
 			manifest.cellSources = await Promise.all(configured.map(async entry => ({ ...await this.specFor(entry.name, entry.kind, entry.path, entry.uri, webview, roots, false), parent: entry.parent })));
 			await webview.postMessage({ type: 'scene', manifest });
 		} catch (error) {

@@ -7,7 +7,7 @@
  */
 
 import { GENE_COLORS, GROUP_COLORS, paletteColor } from './transcript-colors.js';
-import { DEFAULT_OPACITY, TranscriptsLayer } from './transcripts-layer.js';
+import { DEFAULT_OPACITY, DEFAULT_SIZE, TranscriptsLayer } from './transcripts-layer.js';
 import type { GenePoints, TranscriptIndex } from './transcript-data.js';
 import type { TranscriptGeneRow, TranscriptGroupRow, TranscriptsPanelModel } from './transcripts-model.js';
 
@@ -58,6 +58,8 @@ export class TranscriptsWorkspace {
 	private readonly layer: TranscriptsLayer;
 	private index: TranscriptIndex | null = null;
 	private geneIndex = new Map<string, number>();
+	/** Every gene the list can add: those in the file, then panel genes with no transcripts (shown with a count of 0), in one sorted list. */
+	private allGenes: string[] = [];
 	/** Positions of the genes read so far; dropped when a gene leaves the list. */
 	private points = new Map<string, GenePoints>();
 	private fetching = new Set<string>();
@@ -69,11 +71,11 @@ export class TranscriptsWorkspace {
 	private genes: Gene[] = [];
 	private filter: string[] = [];
 	private minQv = 20;
-	private size = 1;
+	private size = DEFAULT_SIZE;
 	private opacity = DEFAULT_OPACITY;
 	private loading: Promise<void> | null = null;
 
-	constructor(private readonly host: TranscriptsWorkspaceHost, private readonly pixelSizeUm: number, definitions: TranscriptGroupDefinition[]) {
+	constructor(private readonly host: TranscriptsWorkspaceHost, private readonly pixelSizeUm: number, definitions: TranscriptGroupDefinition[], private readonly panelGenes: readonly string[] = []) {
 		this.layer = new TranscriptsLayer(() => this.host.requestRender(), 0.8 / pixelSizeUm);
 		this.host.addOverlay(this.layer);
 		this.status = host.available ? 'idle' : 'unavailable';
@@ -94,6 +96,8 @@ export class TranscriptsWorkspace {
 		this.loading = this.host.open((done, total) => { this.message = `Reading gene names… ${done} of ${total}`; this.host.notify(); }).then(index => {
 			this.index = index;
 			index.genes.forEach((gene, position) => { this.geneIndex.set(gene, position); });
+			const silent = this.panelGenes.filter(gene => !this.geneIndex.has(gene));
+			this.allGenes = silent.length ? [...index.genes, ...new Set(silent)].sort() : index.genes;
 			this.status = 'ready';
 			this.message = null;
 			this.layer.setMinQv(this.minQv);
@@ -265,7 +269,7 @@ export class TranscriptsWorkspace {
 			geneChoices: () => {
 				if (!this.index) { return []; }
 				const listedAlready = new Set(this.genes.map(gene => gene.name));
-				return this.index.genes.filter(gene => !listedAlready.has(gene));
+				return this.allGenes.filter(gene => !listedAlready.has(gene));
 			},
 			geneCount: name => { const index = this.geneIndex.get(name); return index !== undefined && this.index ? this.index.counts[index] : 0; },
 			filtering: active.length > 0,
@@ -306,7 +310,7 @@ export class TranscriptsWorkspace {
 		this.genes = (state.genes ?? []).map(gene => ({ ...gene }));
 		this.filter = (state.filter ?? []).filter(name => this.group(name));
 		this.minQv = state.minQv ?? 20;
-		this.size = state.size ?? 1;
+		this.size = state.size ?? DEFAULT_SIZE;
 		this.opacity = state.opacity ?? DEFAULT_OPACITY;
 		this.layer.setOpacity(this.opacity);
 		this.layer.setMinQv(this.minQv);

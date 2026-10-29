@@ -50,11 +50,17 @@ function classicTiff(subOffsets) {
 
 	assert.throws(() => manifest.parseExperiment('{"images":{}}'));
 	assert.throws(() => manifest.parseExperiment('not json'));
+	assert.deepStrictEqual(manifest.parseGenePanel('{"payload":{"targets":[{"type":{"descriptor":"gene","data":{"name":"EPCAM"}}},{"type":{"descriptor":"genomic_control","data":{"name":"Intergenic"}}},{"type":{"descriptor":"gene","data":{"name":"EPCAM"}}}]}}'), ['EPCAM']);
+	assert.deepStrictEqual(manifest.parseGenePanel('not json'), []);
 
 	const cam = pyramid.fitCamera({ width: 1000, height: 500 }, { width: 500, height: 500 });
 	assert.ok(cam.scale > 0);
 
 	if (fs.existsSync(path.join(sample, 'experiment.xenium'))) {
+		if (fs.existsSync(path.join(sample, 'gene_panel.json'))) {
+			const panel = manifest.parseGenePanel(fs.readFileSync(path.join(sample, 'gene_panel.json'), 'utf8'));
+			assert.ok(panel.includes('ACTA2') && !panel.includes('Intergenic_Region_29000'), 'the sample panel lists genes, not controls');
+		}
 		const exp = manifest.parseExperiment(fs.readFileSync(path.join(sample, 'experiment.xenium'), 'utf8'));
 		assert.ok(exp.pixelSizeUm > 0);
 		const listing = fs.readdirSync(path.join(sample, 'morphology_focus'));

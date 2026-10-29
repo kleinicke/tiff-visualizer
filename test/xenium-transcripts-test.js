@@ -44,6 +44,16 @@ async function load(file) {
 		open: async progress => { progress(1, 1); return index; },
 		genes: async names => { fetched.push([...names]); return new Map(names.map(name => [name, buildGenePoints([1, 2], [3, 4], [30, 30], 1)])); },
 	};
+	const quiet = new TranscriptsWorkspace(host, 1, [], ['B', 'Z_NO_TRANSCRIPTS', 'A0']);
+	await quiet.load();
+	const choices = quiet.snapshot().geneChoices();
+	assert.deepStrictEqual(choices, ['A', 'A0', 'B', 'C', 'Z_NO_TRANSCRIPTS'], 'panel genes with no transcripts are offered, in order');
+	assert.strictEqual(quiet.snapshot().geneCount('Z_NO_TRANSCRIPTS'), 0);
+	quiet.snapshot().addGene('Z_NO_TRANSCRIPTS');
+	await quiet.settled();
+	assert.strictEqual(quiet.snapshot().genes[0].count, 0);
+	assert.ok(!fetched.some(names => names.includes('Z_NO_TRANSCRIPTS')), 'no positions are read for a gene with none');
+	fetched.length = 0;
 	const workspace = new TranscriptsWorkspace(host, 1, [{ name: 'Epi', genes: ['A', 'B', 'Z'], color: '#ff0000' }, { name: 'Imm', genes: ['C'], color: '#00ff00' }]);
 	await workspace.load();
 	let model = workspace.snapshot();

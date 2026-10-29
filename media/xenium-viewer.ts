@@ -244,7 +244,7 @@ async function start(manifest: SceneManifest): Promise<void> {
 				removeOverlay: layer => scene.removeOverlay(layer),
 				requestRender: () => scene.requestRender(),
 				notify: () => { panel?.render(); persist(); },
-			}, manifest.pixelSizeUm, parseTranscriptGroups(startup.transcriptGroups));
+			}, manifest.pixelSizeUm, parseTranscriptGroups(startup.transcriptGroups), manifest.genePanel ?? []);
 			transcripts.restore(restorable?.transcripts);
 			void transcripts.load();
 		}

@@ -54,6 +54,8 @@ export interface SceneManifest {
 	cells?: { cells: string; cellBoundaries: string; nucleusBoundaries?: string };
 	/** The bundle's transcripts.parquet, when it has one. */
 	transcripts?: string;
+	/** Gene names in the panel (`gene_panel.json`), so genes with no transcripts can still be listed. */
+	genePanel?: string[];
 	/** Extra cell files named in the settings, resolved by the host. */
 	cellSources?: CellSourceSpec[];
 }
@@ -93,6 +95,20 @@ export function sourceNameFromPath(path: string): string {
 
 function text(value: unknown): string | undefined {
 	return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+/** The gene names in `gene_panel.json` (controls and unassigned codewords are left out); empty if the file is not a panel. */
+export function parseGenePanel(source: string): string[] {
+	let json: unknown;
+	try { json = JSON.parse(source.replace(/^\uFEFF/, '')); } catch { return []; }
+	const payload = (json as { payload?: { targets?: unknown } } | null)?.payload;
+	if (!payload || !Array.isArray(payload.targets)) { return []; }
+	const names = new Set<string>();
+	for (const target of payload.targets as { type?: { descriptor?: unknown; data?: { name?: unknown } } }[]) {
+		const name = target?.type?.data?.name;
+		if (target?.type?.descriptor === 'gene' && typeof name === 'string' && name.trim()) { names.add(name.trim()); }
+	}
+	return [...names];
 }
 
 /** Parse `experiment.xenium`. Throws a message fit to show the user. */
