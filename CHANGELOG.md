@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Cells for ordinary images: right-click an image and choose Cells… (or run Scientific Image Visualizer: Cells) to add a `cell_boundaries.parquet` as an outline overlay with the same Cells panel the Xenium viewer has. `tiffVisualizer.cells.autoOpenPanel` (`auto`, `always`, `never`) opens the panel by itself; `auto` only for multichannel OME-TIFF images with a micron scale. Nothing is created until a file is added
+- Cells for ordinary images: right-click an image and choose Cells… (or run Scientific Image Visualizer: Cells) to add a `cell_boundaries.parquet` as an outline overlay, using the same foldable Cells section the Xenium viewer has at the end of the Channels panel. `tiffVisualizer.cells.autoOpenPanel` (`auto`, `always`, `never`) opens the Channels panel by itself; `auto` only for multichannel OME-TIFF images with a micron scale. Nothing is created until a file is added
 - Xenium transcripts: larger default and maximum dot size, more opaque dots when zoomed out, and panel genes with no transcripts are listed in Add a gene with a count of 0
 - Add a Dot opacity slider to the Xenium Transcripts section
 - Simplify Xenium transcript drawing: dots are always drawn individually at a zoom-following size (2 px minimum, 7 px maximum before Dot size), with no density-image fallback

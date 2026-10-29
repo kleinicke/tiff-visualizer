@@ -11,6 +11,16 @@
   import TranscriptsSection from './transcripts/TranscriptsSection.svelte';
   let { model }: { model: Writable<ChannelsModel> } = $props();
   let open = $state(true);
+  let cellsOpen = $state(true);
+  // A reveal request unfolds its section; a fresh open also folds the other one.
+  let seenFocus = 0;
+  $effect(() => {
+    const focus = $model.focus;
+    if (!focus || focus.id === seenFocus) return;
+    seenFocus = focus.id;
+    if (focus.section === 'channels') { open = true; if (focus.exclusive) cellsOpen = false; }
+    else { cellsOpen = true; if (focus.exclusive) open = false; }
+  });
   let query = $state('');
   const matches = (name: string) => name.toLowerCase().includes(query.trim().toLowerCase());
   let filterGroups = $state<string[]>([]);
@@ -139,6 +149,6 @@
     {/if}
   </div>
   {/if}
-  {#if $model.cells}<CellsSection cells={$model.cells} />{/if}
+  {#if $model.cells}<CellsSection cells={$model.cells} bind:open={cellsOpen} />{/if}
   {#if $model.transcripts}<TranscriptsSection transcripts={$model.transcripts} />{/if}
 </div>

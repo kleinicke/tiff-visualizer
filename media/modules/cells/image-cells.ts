@@ -1,15 +1,15 @@
 /**
- * The Cells feature of the single-image viewer: panel, workspace and overlay.
+ * The Cells feature of the single-image viewer: workspace and overlay. The
+ * Cells section itself is the last section of the Channels panel.
  *
  * Loaded on first use, so an image nobody asks cells for pays for none of it.
- * Opening the panel is a view action and creates nothing: the workspace (and
+ * Showing the section is a view action and creates nothing: the workspace (and
  * with it the overlay canvas) appears on the first thing that needs one, such
  * as adding a segmentation.
  */
 
 import { CellsWorkspace, type CellsWorkspaceHost, type WorkspaceFile } from './cells-workspace.js';
 import type { CellsPanelModel } from './cells-model.js';
-import { CellsPanel } from './cells-panel.js';
 import { ImageCellsOverlay } from './image-cells-overlay.js';
 
 export interface ImageCellsHost {
@@ -18,7 +18,7 @@ export interface ImageCellsHost {
 	/** Microns per pixel, or null when the image has no micron scale. */
 	getMicronsPerPixel: () => number | null;
 	postMessage: (message: { type: 'resolveCell'; requestId: number; text: string } | { type: 'browseCell'; requestId: number }) => void;
-	/** The panel opened or closed, or the workspace changed. */
+	/** The workspace changed: re-render the panel and save state. */
 	onChange: () => void;
 }
 
@@ -28,19 +28,13 @@ export class ImageCells {
 	private workspace: CellsWorkspace | null = null;
 	private resource: string | null = null;
 	private readonly overlay: ImageCellsOverlay;
-	private readonly panel: CellsPanel;
 	private readonly requests = new Map<number, { resolve: (file: WorkspaceFile | null) => void; reject: (error: Error) => void }>();
 	private counter = 0;
 
 	constructor(private readonly host: ImageCellsHost) {
 		this.overlay = new ImageCellsOverlay(host);
-		this.panel = new CellsPanel(() => this.model(), () => host.onChange());
 	}
 
-	show(): void { this.panel.show(); }
-	hide(): void { this.panel.hide(); }
-	toggle(): void { this.panel.toggle(); }
-	isVisible(): boolean { return this.panel.isVisible(); }
 	hasWorkspace(): boolean { return this.workspace !== null; }
 	redraw(): void { this.overlay.scheduleRedraw(); }
 
@@ -50,7 +44,7 @@ export class ImageCells {
 		this.resource = resource;
 		this.workspace = null;
 		this.overlay.clear();
-		this.panel.render();
+		this.host.onChange();
 	}
 
 	/** A reply to `resolveCell` or `browseCell`. */
@@ -62,7 +56,7 @@ export class ImageCells {
 		else { request.resolve(message.cancelled || !message.spec ? null : message.spec as WorkspaceFile); }
 	}
 
-	dispose(): void { this.overlay.clear(); this.panel.dispose(); }
+	dispose(): void { this.overlay.clear(); }
 
 	private ask(type: 'resolveCell' | 'browseCell', text = ''): Promise<WorkspaceFile | null> {
 		return new Promise((resolve, reject) => {
@@ -86,13 +80,14 @@ export class ImageCells {
 			addOverlay: layer => this.overlay.add(layer),
 			removeOverlay: layer => this.overlay.remove(layer),
 			requestRender: () => this.overlay.scheduleRedraw(),
-			notify: () => { this.panel.render(); this.host.onChange(); },
+			notify: () => this.host.onChange(),
 		};
 		this.workspace = new CellsWorkspace(host, pixelSize);
 		return this.workspace;
 	}
 
-	private model(): CellsPanelModel {
+	/** The Cells section's model: what is loaded, or an empty section whose first action creates the workspace. */
+	model(): CellsPanelModel {
 		if (this.workspace) { return this.workspace.snapshot(null); }
 		return {
 			status: this.host.getMicronsPerPixel() === null ? UNSCALED : null,
