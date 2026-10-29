@@ -119,6 +119,11 @@
         <span>Dot size</span>
         <input type="range" min="50" max="400" class="channel-slider" value={Math.round(transcripts.size * 100)} oninput={e => transcripts.setSize(Number(e.currentTarget.value) / 100)}>
       </label>
+      <label class="cells-field">
+        <span>Dot opacity</span>
+        <input type="range" min="5" max="100" class="channel-slider" value={Math.round(transcripts.opacity * 100)} title="How solid a dot is, matched across zoom levels. Above 90% the dots also gain extra ink, which shows when zoomed out." oninput={e => transcripts.setOpacity(Number(e.currentTarget.value) / 100)}>
+        <span class="channel-group-count">{Math.round(transcripts.opacity * 100)}%</span>
+      </label>
     </div>
   {/if}
 </section>

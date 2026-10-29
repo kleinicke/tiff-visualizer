@@ -7,7 +7,7 @@
  */
 
 import { GENE_COLORS, GROUP_COLORS, paletteColor } from './transcript-colors.js';
-import { TranscriptsLayer } from './transcripts-layer.js';
+import { DEFAULT_OPACITY, TranscriptsLayer } from './transcripts-layer.js';
 import type { GenePoints, TranscriptIndex } from './transcript-data.js';
 import type { TranscriptGeneRow, TranscriptGroupRow, TranscriptsPanelModel } from './transcripts-model.js';
 
@@ -36,6 +36,7 @@ export interface TranscriptsWorkspaceState {
 	filter: string[];
 	minQv: number;
 	size: number;
+	opacity?: number;
 }
 
 /** Groups from the settings: name → gene list, or name → {genes, color}. */
@@ -69,6 +70,7 @@ export class TranscriptsWorkspace {
 	private filter: string[] = [];
 	private minQv = 20;
 	private size = 1;
+	private opacity = DEFAULT_OPACITY;
 	private loading: Promise<void> | null = null;
 
 	constructor(private readonly host: TranscriptsWorkspaceHost, private readonly pixelSizeUm: number, definitions: TranscriptGroupDefinition[]) {
@@ -96,6 +98,7 @@ export class TranscriptsWorkspace {
 			this.message = null;
 			this.layer.setMinQv(this.minQv);
 			this.layer.setSize(this.size);
+			this.layer.setOpacity(this.opacity);
 			this.sync();
 		}).catch((error: unknown) => {
 			this.status = 'error';
@@ -266,7 +269,7 @@ export class TranscriptsWorkspace {
 			},
 			geneCount: name => { const index = this.geneIndex.get(name); return index !== undefined && this.index ? this.index.counts[index] : 0; },
 			filtering: active.length > 0,
-			minQv: this.minQv, size: this.size,
+			minQv: this.minQv, size: this.size, opacity: this.opacity,
 			load: () => { void this.load(); },
 			addGene: name => { this.ensure(name, true); this.sync(); },
 			addGroup: name => { const group = this.group(name); if (group) { group.added = true; void this.load(); this.sync(); } },
@@ -280,6 +283,7 @@ export class TranscriptsWorkspace {
 			clearFilter: () => { this.filter = []; this.sync(); },
 			setMinQv: value => { this.minQv = value; this.layer.setMinQv(value); this.host.notify(); },
 			setSize: value => { this.size = value; this.layer.setSize(value); this.host.notify(); },
+			setOpacity: value => { this.opacity = value; this.layer.setOpacity(value); this.host.notify(); },
 		};
 	}
 
@@ -288,7 +292,7 @@ export class TranscriptsWorkspace {
 	getState(): TranscriptsWorkspaceState {
 		return {
 			groups: this.groups.map(group => ({ name: group.name, genes: group.genes, color: group.color, palette: group.palette, added: group.added, user: group.user })),
-			genes: this.genes.map(gene => ({ ...gene })), filter: this.filter, minQv: this.minQv, size: this.size,
+			genes: this.genes.map(gene => ({ ...gene })), filter: this.filter, minQv: this.minQv, size: this.size, opacity: this.opacity,
 		};
 	}
 
@@ -303,6 +307,8 @@ export class TranscriptsWorkspace {
 		this.filter = (state.filter ?? []).filter(name => this.group(name));
 		this.minQv = state.minQv ?? 20;
 		this.size = state.size ?? 1;
+		this.opacity = state.opacity ?? DEFAULT_OPACITY;
+		this.layer.setOpacity(this.opacity);
 		this.layer.setMinQv(this.minQv);
 		this.layer.setSize(this.size);
 		this.sync();

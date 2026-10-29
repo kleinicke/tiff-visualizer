@@ -59,6 +59,8 @@ export interface TranscriptsPanelModel {
 	filtering: boolean;
 	minQv: number;
 	size: number;
+	/** Dot opacity, 0 to 1. */
+	opacity: number;
 	load: () => void;
 	addGene: (name: string) => void;
 	addGroup: (name: string) => void;
@@ -70,4 +72,5 @@ export interface TranscriptsPanelModel {
 	clearFilter: () => void;
 	setMinQv: (value: number) => void;
 	setSize: (value: number) => void;
+	setOpacity: (value: number) => void;
 }

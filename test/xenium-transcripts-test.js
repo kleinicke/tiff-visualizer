@@ -111,12 +111,16 @@ async function load(file) {
 	assert.deepStrictEqual(model.groupChoices.map(group => group.name), ['Fresh'], 'a group added to settings is offered; one removed from settings is gone');
 	assert.ok(model.groups.some(group => group.name === 'Epi' && group.total === 1 && group.color === '#123456'), 'a known group follows its new definition');
 	assert.ok(model.groups.some(group => group.name === 'Mine'), 'panel-made groups stay');
+	assert.strictEqual(model.opacity, 0.9, 'dots are 90% opaque by default');
+	model.setOpacity(0.4);
+	assert.strictEqual(workspace.snapshot().opacity, 0.4);
 	const state = workspace.getState();
 	const again = new TranscriptsWorkspace(host, 1, []);
 	await again.load();
 	again.restore(JSON.parse(JSON.stringify(state)));
 	await again.settled();
 	assert.deepStrictEqual(again.snapshot().genes.map(gene => gene.name), ['C']);
+	assert.strictEqual(again.snapshot().opacity, 0.4, 'opacity is saved with the session');
 
 	const sample = path.join(__dirname, '..', 'test-samples/scientific/xenium/Xenium_V1_MultiCellSeg_Human_Ovary_tiny_outs/transcripts.parquet');
 	if (fs.existsSync(sample)) {
