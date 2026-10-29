@@ -4970,11 +4970,14 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				return;
 			}
 
+			if (e.target === imageElement || e.target === container) {
+				if (zoomController.beginPan(e, moved => { if (moved) { mouseHandler.consumeClick = true; } })) { return; }
+			}
+
 			if (e.button !== 0 || e.target !== imageElement) {
 				return;
 			}
 
-			const keyState = mouseHandler.getKeyboardState();
 			mouseHandler.consumeClick = !mouseHandler.isActive;
 		});
 

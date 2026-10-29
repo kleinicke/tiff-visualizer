@@ -288,7 +288,8 @@ export class ZoomController {
 		// Embedded IDE controls can receive the keydown before focus reaches the
 		// image. WheelEvent carries the modifier even when that keydown was missed.
 		const isScrollWheelKeyPressed = this.settingsManager.isMac ? (e.altKey || altPressed) : (e.ctrlKey || ctrlPressed);
-		if (!isScrollWheelKeyPressed && !e.ctrlKey) { // pinching is reported as scroll wheel + ctrl
+		const scrollToZoom = this.scrollToZoom;
+		if (!scrollToZoom && !isScrollWheelKeyPressed && !e.ctrlKey) { // pinching is reported as scroll wheel + ctrl
 			return;
 		}
 
@@ -301,7 +302,11 @@ export class ZoomController {
 			this.firstZoom();
 		}
 
-		if (this.container.classList.contains('web-app') && !document.documentElement.classList.contains('jetbrains-host')) {
+		if (scrollToZoom) {
+			const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.viewport().height : 1;
+			const delta = Math.max(-100, Math.min(100, e.deltaY * unit));
+			this.updateScale((this.scale as number) * Math.exp(-delta * (e.ctrlKey ? 0.01 : 0.0025)), { x: e.clientX, y: e.clientY });
+		} else if (this.container.classList.contains('web-app') && !document.documentElement.classList.contains('jetbrains-host')) {
 			const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.viewport().height : 1;
 			const delta = Math.max(-100, Math.min(100, e.deltaY * unit));
 			this.updateScale((this.scale as number) * Math.exp(-delta * (e.ctrlKey ? 0.01 : 0.0025)));
@@ -312,6 +317,39 @@ export class ZoomController {
 	}
 
 	/** Safari emits GestureEvents for trackpad pinches instead of ctrl-wheel. */
+	/** `tiffVisualizer.scrollToZoom`: the wheel zooms about the cursor and dragging the image pans it. */
+	get scrollToZoom(): boolean { return this.settingsManager.settings.scrollToZoom === true; }
+
+	/**
+	 * Start panning by dragging. Returns false when there is nothing to pan (fit mode or a
+	 * disabled setting). A drag past `DRAG_THRESHOLD` px reports `moved` so the caller can
+	 * swallow the click that follows the release.
+	 */
+	beginPan(event: MouseEvent, onEnd: (moved: boolean) => void): boolean {
+		if (!this.scrollToZoom || !this.hasLoadedImage || this.scale === 'fit' || (event.button !== 0 && event.button !== 1)) { return false; }
+		event.preventDefault();
+		let last = { x: event.clientX, y: event.clientY };
+		let moved = false;
+		this.container.classList.add('panning');
+		const move = (e: MouseEvent) => {
+			if (!moved && Math.hypot(e.clientX - event.clientX, e.clientY - event.clientY) < ZoomController.DRAG_THRESHOLD) { return; }
+			moved = true;
+			window.scrollBy(last.x - e.clientX, last.y - e.clientY);
+			last = { x: e.clientX, y: e.clientY };
+		};
+		const up = () => {
+			window.removeEventListener('mousemove', move, true);
+			window.removeEventListener('mouseup', up, true);
+			this.container.classList.remove('panning');
+			onEnd(moved);
+		};
+		window.addEventListener('mousemove', move, true);
+		window.addEventListener('mouseup', up, true);
+		return true;
+	}
+
+	static readonly DRAG_THRESHOLD = 4;
+
 	handleGesture(event: Event & { scale?: number }) {
 		if (!this.imageElement || !this.hasLoadedImage) { return; }
 		event.preventDefault();

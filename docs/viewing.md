@@ -27,8 +27,15 @@ it, which is how you get two people looking at the same pixel of the same file.
 
 ## Zoom and pan
 
-Wheel or pinch (trackpad or touch screen) to zoom, drag to pan, click the zoom
-status bar entry to fit the image again. **Zoom In**, **Zoom Out** and
+Hold `Option` (macOS) or `Ctrl` and scroll to zoom, scroll to pan, pinch
+(trackpad or touch screen) to zoom, click the zoom status bar entry to fit the
+image again.
+
+Set `tiffVisualizer.scrollToZoom` to `true` to zoom with the wheel or trackpad
+scroll alone, about the cursor, and to pan by dragging the image. A click that
+does not drag still zooms in.
+
+**Zoom In**, **Zoom Out** and
 **Reset Zoom** are also commands, so they can be bound to your own keys.
 
 Beyond a certain magnification the viewer stops interpolating and draws hard

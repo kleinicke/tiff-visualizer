@@ -148,6 +148,11 @@ body img {
 	cursor: zoom-out;
 }
 
+.container.ready.panning {
+	cursor: grabbing;
+	user-select: none;
+}
+
 .container .embedded-link,
 .container .embedded-link:hover {
 	cursor: pointer;
