@@ -10,10 +10,14 @@
 //! known genes (see `tx_set_genes`) as gene code, x, y and quality arrays. Both return 0 or an
 //! error code; a non-zero code means "use the general reader for this row group".
 //!
+//! `mask_trace` is a second, unrelated entry: it traces a label mask (a cell segmentation saved as an image)
+//! into polygons. See `mask.rs`.
+//!
 //! Plain C ABI, no imports: instantiate with `WebAssembly.instantiate(module, {})`.
 
 mod column;
 mod hybrid;
+mod mask;
 mod thrift;
 mod zstd;
 

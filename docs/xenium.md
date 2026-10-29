@@ -140,6 +140,25 @@ the arrow, as in the Xenium viewer). Add a Xenium-style `cell_boundaries.parquet
 (`cell_id`, `vertex_x`, `vertex_y` in microns) by path or with Browse, then Load it.
 Outlines, colouring by a table column and click selection work as in the Xenium viewer.
 
+Other segmentation outputs can be added the same way:
+
+- **TIFF label mask** (`.tif`, `.tiff`): an unsigned-integer image where each object is
+  numbered from 1 and 0 is background (Cellpose, StarDist, steinbock, ...). Each label is
+  traced into an outline (holes are ignored and only the largest connected piece of a label
+  is kept), and the object numbers become the `cell_id` of the table. The mask may be a
+  different resolution from the image if it has the same shape; masks over 150 megapixels
+  are refused.
+- **CSV or TSV table** (`.csv`, `.tsv`): a per-cell table, used to colour the outlines by
+  any column. It needs a column of cell ids that match the outlines.
+
+The id column is `cell_id`, or the first column whose name is in
+`tiffVisualizer.cells.cellIdCol` (case-insensitive). steinbock writes its intensity tables
+with an `Object` column, so use:
+
+```json
+"tiffVisualizer.cells.cellIdCol": ["Object"]
+```
+
 Showing the section changes nothing: the overlay is created when the first file is added,
 and each image starts without cells. Coordinates are divided by the image's pixel size,
 so the image needs a micron scale (OME-TIFF, TIFF resolution tags or Measure > Set

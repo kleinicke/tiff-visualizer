@@ -6,6 +6,7 @@ import {
 } from '../../media/modules/scene/xenium-manifest';
 import { escapeAttribute, getNonce } from '../util/dom';
 import { answerCellRequest, locate, specFor } from '../cells/cellFiles';
+import { getCellIdColumns } from '../cells/cellIdColumns';
 
 /**
  * Opens a Xenium output bundle from its `experiment.xenium` manifest.
@@ -41,8 +42,8 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 		panel.webview.html = this.html(panel.webview);
 		// Groups edited in settings.json while the viewer is open show up without reopening it.
 		const settingsWatcher = vscode.workspace.onDidChangeConfiguration(event => {
-			if (event.affectsConfiguration('tiffVisualizer.channels') || event.affectsConfiguration('tiffVisualizer.transcripts')) {
-				void panel.webview.postMessage({ type: 'settings', channelDefaults: this.getChannelDefaults(), transcriptGroups: this.getTranscriptGroups() });
+			if (event.affectsConfiguration('tiffVisualizer.channels') || event.affectsConfiguration('tiffVisualizer.transcripts') || event.affectsConfiguration('tiffVisualizer.cells.cellIdCol')) {
+				void panel.webview.postMessage({ type: 'settings', channelDefaults: this.getChannelDefaults(), transcriptGroups: this.getTranscriptGroups(), cellIdCols: getCellIdColumns() });
 			}
 		});
 		panel.onDidDispose(() => settingsWatcher.dispose());
@@ -146,6 +147,7 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 		const settings = {
 			channelDefaults: this.getChannelDefaults(),
 			transcriptGroups: this.getTranscriptGroups(),
+			cellIdCols: getCellIdColumns(),
 		};
 		return /* html */`<!DOCTYPE html>
 <html lang="en">

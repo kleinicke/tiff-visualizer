@@ -23,8 +23,8 @@
     </div>
   {/each}
   <form class="cells-add" onsubmit={add}>
-    <input type="text" class="measure-input" bind:value={text} spellcheck="false" aria-label="Path of a table or nucleus boundaries .parquet file for {set.name}" placeholder="Add a table or nuclei (.parquet)"
-      title="A table (cell_id plus metrics, merged into {set.name} by cell_id) or nucleus outlines (a nucleus_boundaries.parquet, which replaces the current nuclei). Relative paths start at the workspace folder.">
+    <input type="text" class="measure-input" bind:value={text} spellcheck="false" aria-label="Path of a table (.parquet, .csv, .tsv) or nucleus outlines for {set.name}" placeholder="Add a table or nuclei (.csv, .tsv, .parquet, .tif)"
+      title="A table (.parquet, .csv or .tsv with an id column plus metrics, merged into {set.name} by cell id; other id column names go in tiffVisualizer.cells.cellIdCol) or nucleus outlines (a nucleus_boundaries.parquet or a nucleus mask .tif, which replaces the current nuclei). Relative paths start at the workspace folder.">
     <button type="button" class="measure-button" title="Choose a file" onclick={set.browseTable}>Browse…</button>
     <button type="submit" class="measure-button" disabled={!text.trim()}>Add</button>
   </form>

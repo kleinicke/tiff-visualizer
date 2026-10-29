@@ -43,7 +43,7 @@ export async function answerCellRequest(webview: vscode.Webview, requestId: unkn
 		if (text === null) {
 			const picked = await vscode.window.showOpenDialog({
 				canSelectMany: false, defaultUri: baseFolder(sampleFolder), openLabel: 'Add cells',
-				filters: { Parquet: ['parquet'], 'All files': ['*'] },
+				filters: { 'Cell files': ['parquet', 'tif', 'tiff', 'csv', 'tsv'], 'All files': ['*'] },
 			});
 			if (!picked?.length) { await webview.postMessage({ type: 'cellSource', requestId, cancelled: true }); return; }
 			uri = picked[0];

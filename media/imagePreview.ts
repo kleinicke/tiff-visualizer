@@ -1043,6 +1043,7 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 				getImageElement: () => imageElement,
 				getImageSize: () => _pyramidScene ? { width: _pyramidScene.fullWidth, height: _pyramidScene.fullHeight } : canvas ? { width: canvas.width, height: canvas.height } : null,
 				getMicronsPerPixel: () => micronsPerPixel(measureCalibration),
+				getIdColumns: () => settingsManager.settings.cellIdCols ?? [],
 				postMessage: message => vscode.postMessage(message),
 				onChange: () => { channelsPanel.render(); scheduleSaveState(); },
 			});

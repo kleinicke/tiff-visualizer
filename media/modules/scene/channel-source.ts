@@ -78,6 +78,13 @@ export class TiffChannelSource {
 
 	/** Fetch `src`, hand it to a new worker and read its level directory. */
 	static async open(src: string, codecModule: WebAssembly.Module, signal?: AbortSignal): Promise<TiffChannelSource> {
+		const response = await fetch(src, { signal });
+		if (!response.ok) { throw new Error(`Could not read ${src.split('/').pop()} (HTTP ${response.status}).`); }
+		return TiffChannelSource.fromBytes(await response.arrayBuffer(), codecModule);
+	}
+
+	/** Like `open`, for a file already in memory. The bytes are handed to the worker, not copied. */
+	static async fromBytes(bytes: ArrayBuffer, codecModule: WebAssembly.Module): Promise<TiffChannelSource> {
 		const worker = await createWorker();
 		const call = (message: Record<string, unknown>, transfer: Transferable[] = []) => new Promise<any>((resolve, reject) => {
 			const id = Math.random();
@@ -91,9 +98,6 @@ export class TiffChannelSource {
 		});
 		try {
 			await call({ type: 'init', module: codecModule });
-			const response = await fetch(src, { signal });
-			if (!response.ok) { throw new Error(`Could not read ${src.split('/').pop()} (HTTP ${response.status}).`); }
-			const bytes = await response.arrayBuffer();
 			const opened = await call({ type: 'open', bytes }, [bytes]);
 			const levels = sceneLevels(parsePageDirectory(opened.directory));
 			if (levels.length === 0) { throw new Error('The file has no readable image.'); }

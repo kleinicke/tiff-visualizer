@@ -39,7 +39,7 @@ interface PersistedState {
 
 const vscode = acquireVsCodeApi();
 const root = document.getElementById('scene-root')!;
-const startup = JSON.parse(document.getElementById('xenium-settings')?.dataset.settings || '{}') as { channelDefaults?: ChannelDefaults; transcriptGroups?: unknown };
+const startup = JSON.parse(document.getElementById('xenium-settings')?.dataset.settings || '{}') as { channelDefaults?: ChannelDefaults; transcriptGroups?: unknown; cellIdCols?: string[] };
 
 let viewer: SceneViewer | null = null;
 let pixelSizeUm = 1;
@@ -125,7 +125,7 @@ function askHost(type: 'resolveCell' | 'browseCell', text?: string): Promise<Wor
 
 function createWorkspace(scene: SceneViewer, pixelSize: number): CellsWorkspace {
 	const host: CellsWorkspaceHost = {
-		load: file => loadCellSource({ src: file.src, bytes: file.bytes, kind: file.kind }, pixelSize),
+		load: file => loadCellSource({ src: file.src, bytes: file.bytes, kind: file.kind, name: file.path }, pixelSize, { idColumns: startup.cellIdCols }),
 		resolve: async text => {
 			const file = await askHost('resolveCell', text);
 			if (!file) { throw new Error('Cancelled'); }
@@ -264,6 +264,7 @@ window.addEventListener('message', event => {
 	else if (message?.type === 'settings') {
 		startup.channelDefaults = message.channelDefaults as ChannelDefaults;
 		startup.transcriptGroups = message.transcriptGroups;
+		startup.cellIdCols = message.cellIdCols as string[] | undefined;
 		if (soloGroup !== null && !allGroups().some(group => group.name === soloGroup)) { soloGroup = null; applySolo(null); viewer?.invalidate(); }
 		transcripts?.setDefinitions(parseTranscriptGroups(startup.transcriptGroups));
 		panel?.render();
