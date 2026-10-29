@@ -3452,3 +3452,18 @@ body img {
 	opacity: 0.7;
 	font-size: 11px;
 }
+
+/* Cells: the panel sits on the right so it does not cover the Channels panel, and the
+   overlay is below all chrome (like .measure-overlay) and never takes clicks. */
+.cells-panel {
+	left: auto;
+	right: 20px;
+}
+
+.cells-overlay {
+	position: fixed;
+	top: 0;
+	left: 0;
+	z-index: 16;
+	pointer-events: none;
+}

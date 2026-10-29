@@ -84,6 +84,8 @@ import { offerPrefetch, offerPushedSource, setPushedSourceChannel, startPrefetch
 import type { LayeredDocumentFormat } from './modules/layered-document.js';
 import { isTiffPath, layeredFormatOf, resolveFormat } from './modules/format-registry.js';
 import { PyramidScene } from './modules/pyramid-scene.js';
+import { micronsPerPixel, parseCellsAutoOpen, shouldAutoOpenCells } from './modules/cells/cells-relevance.js';
+import type { ImageCells } from './modules/cells/image-cells.js';
 
 /**
  * Main Image Preview Application
@@ -368,6 +370,12 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	// The file `tiffVisualizer.channels.autoOpenPanel` last opened the panel for,
 	// so closing the panel, or stepping through Z/T, is not undone.
 	let autoPanelResource: string | null = null;
+	// The Cells feature loads on first use; `tiffVisualizer.cells.autoOpenPanel`
+	// opens it once per file, like the Channels setting above.
+	let imageCells: ImageCells | null = null;
+	let imageCellsLoading: Promise<ImageCells> | null = null;
+	let autoCellsResource: string | null = null;
+	let cellsPanelWanted = false;
 	let compositeAuto = false;
 	let channelGeneration = -1;
 	// Sibling pages of an OME/ImageJ stack decode in the background. The panel
@@ -911,6 +919,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	zoomController.onScaleChanged = () => {
 		invalidatePyramidViewport();
 		roiOverlay.scheduleRedraw();
+		imageCells?.redraw();
 		mouseHandler.refreshAtPointer();
 		// Zooming past a pyramid level's resolution is exactly when the finer
 		// level becomes worth its decode; nothing else in the session changes
@@ -1024,6 +1033,47 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		scheduleSaveState();
 	}
 
+	function currentResource(): string { return settingsManager.settings.resourceUri || settingsManager.settings.src || ''; }
+
+	function loadImageCells(): Promise<ImageCells> {
+		imageCellsLoading ??= import('./modules/cells/image-cells.js').then(({ ImageCells: Cells }) => {
+			const cells = new Cells({
+				getImageElement: () => imageElement,
+				getImageSize: () => _pyramidScene ? { width: _pyramidScene.fullWidth, height: _pyramidScene.fullHeight } : canvas ? { width: canvas.width, height: canvas.height } : null,
+				getMicronsPerPixel: () => micronsPerPixel(measureCalibration),
+				postMessage: message => vscode.postMessage(message),
+				onChange: () => { cellsPanelWanted = cells.isVisible(); scheduleSaveState(); },
+			});
+			cells.setResource(currentResource());
+			imageCells = cells;
+			return cells;
+		});
+		return imageCellsLoading;
+	}
+
+	function toggleCellsPanel(show?: boolean): void {
+		void loadImageCells().then(cells => { if (show === undefined) { cells.toggle(); } else if (show) { cells.show(); } else { cells.hide(); } });
+	}
+
+	/** Keep cells with their file: a different file starts without them, stepping Z or T does not. */
+	function syncCellsResource(): void {
+		imageCells?.setResource(currentResource());
+	}
+
+	/** Apply `tiffVisualizer.cells.autoOpenPanel`: once per file, and only for images the setting selects. */
+	function applyAutoOpenCells(): void {
+		const resource = currentResource();
+		if (autoCellsResource === resource) { return; }
+		const hints = {
+			channels: Math.max(channelPlanes.length, tiffProcessor.rawTiffData?.ome?.sizeC || 0),
+			omeMetadata: !!tiffProcessor.rawTiffData?.ome,
+			micronsPerPixel: micronsPerPixel(measureCalibration),
+		};
+		if (!shouldAutoOpenCells(parseCellsAutoOpen(settingsManager.settings.cellsAutoOpenPanel), hints)) { return; }
+		autoCellsResource = resource;
+		toggleCellsPanel(true);
+	}
+
 	/** Drop measurement caches when the displayed image changes. */
 	function invalidateMeasurementForNewImage(): void {
 		measurementSourceCache = null;
@@ -1052,6 +1102,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		}
 		applyAutoComposite();
 		applyAutoOpenPanel();
+		syncCellsResource();
+		applyAutoOpenCells();
 		if (compositeEnabled || channelsPanel.isVisible()) { rebuildChannelPlanes(); }
 		if (compositeEnabled) { scheduleCompositeRender(); }
 		// Ask whether this image has ROIs saved beside it. Cheap, silent when
@@ -1302,6 +1354,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	function isOverlayChrome(element: Element): boolean {
 		return !!element.closest('.histogram-overlay')
 			|| element.classList.contains('measure-overlay')
+			|| element.classList.contains('cells-overlay')
 			|| element.classList.contains('detail-patch');
 	}
 
@@ -1606,8 +1659,10 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		compositeEnabled = persistedState.compositeEnabled === true;
 		compositeChosenByUser = persistedState.compositeChosenByUser === true;
 		autoPanelResource = typeof persistedState.autoPanelResource === 'string' ? persistedState.autoPanelResource : null;
+		autoCellsResource = typeof persistedState.autoCellsResource === 'string' ? persistedState.autoCellsResource : null;
 		compositeAuto = persistedState.compositeAuto === true;
 		if (persistedState.isChannelsPanelVisible) { channelsPanel.show(); }
+		if (persistedState.isCellsPanelVisible) { cellsPanelWanted = true; toggleCellsPanel(true); }
 		if (Array.isArray(persistedState.layerGroupCollapsed)) {
 			layersPanel.collapsedGroups = new Set(persistedState.layerGroupCollapsed.map(String));
 		}
@@ -1701,11 +1756,13 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			isDebayerPanelVisible: debayerPanel.isVisible(),
 			isMeasurePanelVisible: measurePanel.isVisible(),
 			isChannelsPanelVisible: channelsPanel.isVisible(),
+			isCellsPanelVisible: imageCells ? imageCells.isVisible() : cellsPanelWanted,
 			// Channel planes are re-derived from the image; only the user's
 			// choices are worth persisting.
 			compositeEnabled,
 			compositeChosenByUser,
 			autoPanelResource,
+			autoCellsResource,
 			compositeAuto,
 			channelSettings,
 			channelSolo,
@@ -4253,6 +4310,14 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				channelsPanel.toggle();
 				break;
 
+			case 'toggleCells':
+				toggleCellsPanel();
+				break;
+
+			case 'cellSource':
+				imageCells?.onHostFile(message);
+				break;
+
 			case 'toggleMeasure':
 				measurePanel.toggle();
 				vscode.postMessage({
@@ -5166,6 +5231,13 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 					() => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleChannels' }); },
 				));
 			}
+
+			// One entry like Measure. The panel is empty until a segmentation is
+			// added, so an image nobody asks cells for is unchanged.
+			measureItems.push(createMenuItem(
+				imageCells?.isVisible() ? 'Close Cells Panel' : 'Cells…',
+				() => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleCells' }); },
+			));
 
 			// Measurement is one entry, not a submenu of eleven: the tools live
 			// inside the panel, so the menu stays as short as it is today.

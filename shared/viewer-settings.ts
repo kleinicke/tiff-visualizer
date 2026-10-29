@@ -43,6 +43,8 @@ export interface ImageSettings extends Partial<DisplaySettings> {
   gpuAcceleration?: boolean;
   navigationShortcuts?: Record<string, string[]>;
   channelDefaults?: ChannelDefaults;
+  /** `tiffVisualizer.cells.autoOpenPanel`: when the Cells panel opens by itself. */
+  cellsAutoOpenPanel?: 'auto' | 'always' | 'never';
   /** Experimental: read rectangles out of large tiled TIFFs. See viewport-tiles.ts. */
   experimentalRegionDecode?: boolean;
   plyVisualizerInstalled?: boolean;

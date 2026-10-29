@@ -93,6 +93,7 @@ See [index](./index.md).
 | --- | --- | --- |
 | Open Image from URL... | `tiffVisualizer.openImageFromUrl` |  |
 | Channels | `tiffVisualizer.toggleChannels` |  |
+| Cells | `tiffVisualizer.toggleCells` |  |
 | Toggle Scale Bar | `tiffVisualizer.toggleScaleBar` |  |
 
 ## Keybindings
@@ -124,6 +125,7 @@ letters select tools — see [measurement](./measure.md).
 | `tiffVisualizer.channels.colorsByName` | `{}` | Channel tints by channel name, matched case-insensitively, for example {"DAPI": "#3399ff", "GFP": "#00ff00"}. Takes precedence over colorsByNumber and over colours stored in the file. |
 | `tiffVisualizer.channels.colorsByNumber` | `{}` | Channel tints by channel number as shown in the Channels panel (starting at 1), for example {"1": "#00ff00"}. Takes precedence over colours stored in the file. |
 | `tiffVisualizer.channels.groups` | `{}` | Named groups of channels for the Channels panel, for example {"T Cells": ["CD3e", "CD8", "CD4"]}. Each value lists channel names (exact, case-insensitive) or 1-based channel numbers. A group can be switched on or off, or soloed, as a unit. |
+| `tiffVisualizer.cells.autoOpenPanel` | `"auto"` | When the Cells panel opens by itself. It opens once per file, so closing it is not undone as you step through Z or T. |
 | `tiffVisualizer.cells.cellsParquet` | `{}` | Extra cell tables for Xenium bundles, as name → {path, parent}, for example {"xenium_segtraq": {"path": "segtraq/{sample_name}/{sample_name}.segtraq_cells.parquet", "parent": "Xenium cells"}}. Each file needs a cell_id column. It is listed under its parent cell set only, and its columns are merged into that set by cell_id when you click Load. The parent is Xenium cells (the bundle's own cells) or a name from tiffVisualizer.cells.cellBoundariesParquet. {sample_name} is the name of the folder that holds experiment.xenium. Relative paths start at the workspace folder. |
 | `tiffVisualizer.transcripts.groups` | `{}` | Gene groups for the Transcripts section of Xenium bundles, as name → gene list, for example {"Epithelial": ["EPCAM", "KRT8"]}, or name → {genes, color} to choose the group colour. Groups are offered in the Transcripts section's Add group list; none is added until you pick it. Groups can also be made in the panel, from a pasted list of gene names. |
 | `tiffVisualizer.cells.cellBoundariesParquet` | `{}` | Extra cell segmentations for Xenium bundles, as name → path, for example {"sam2": "sam2/{sample_name}/cell_boundaries.parquet"}. Each file is a Xenium-style cell_boundaries.parquet (cell_id, vertex_x, vertex_y in microns). {sample_name} is the name of the folder that holds experiment.xenium. Relative paths start at the workspace folder. Segmentations are listed in the Cells section and loaded when you click Load. |

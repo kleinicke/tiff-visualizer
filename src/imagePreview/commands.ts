@@ -1676,6 +1676,23 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleCells', () => {
+		logCommand('toggleCells', 'start');
+		try {
+			const preview = previewManager.activePreview;
+			if (!preview) {
+				vscode.window.showInformationMessage(
+					'Open an image in the Scientific Image Visualizer first, then run Cells.');
+				logCommand('toggleCells', 'error', 'No active preview');
+				return;
+			}
+			preview.toggleCells();
+			logCommand('toggleCells', 'success');
+		} catch (error) {
+			logCommand('toggleCells', 'error', String(error));
+		}
+	}));
+
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleMetadata', () => {
 		logCommand('toggleMetadata', 'start');
 		try {

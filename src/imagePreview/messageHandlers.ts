@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import { Utils } from 'vscode-uri';
+import { answerCellRequest } from '../cells/cellFiles';
 import { ImagePreview } from './imagePreview';
 import { PreviewState } from '../mediaPreview';
 import { SizeStatusBarEntry } from './sizeStatusBarEntry';
@@ -54,6 +56,8 @@ export class MessageRouter {
 		this.handlers.set('measureSaveBinary', new MeasureSaveBinaryMessageHandler());
 		this.handlers.set('measureSaveSidecar', new MeasureSaveSidecarMessageHandler());
 		this.handlers.set('measureRequestImport', new MeasureRequestImportMessageHandler());
+		this.handlers.set('resolveCell', new CellFileMessageHandler(false));
+		this.handlers.set('browseCell', new CellFileMessageHandler(true));
 		this.handlers.set('measureCheckSidecar', new MeasureCheckSidecarMessageHandler());
 	}
 
@@ -520,6 +524,15 @@ class MeasureSaveSidecarMessageHandler implements MessageHandler {
 				vscode.window.showErrorMessage(`Could not save ROIs: ${error}`);
 			}
 		})();
+	}
+}
+
+/** Locate a cell file for the Cells panel: a typed path, or (browse) the file dialog. */
+class CellFileMessageHandler implements MessageHandler {
+	constructor(private readonly browse: boolean) { }
+	handle(message: any, preview: ImagePreview): void {
+		const webview = preview.getWebview();
+		void answerCellRequest(webview, message.requestId, Utils.dirname(preview.getCurrentImage()), webview.options.localResourceRoots ?? [], this.browse ? null : typeof message.text === 'string' ? message.text : '');
 	}
 }
 
