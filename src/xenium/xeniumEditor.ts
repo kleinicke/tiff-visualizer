@@ -6,6 +6,7 @@ import {
 } from '../../media/modules/scene/xenium-manifest';
 import { escapeAttribute, getNonce } from '../util/dom';
 import { answerCellRequest, locate, specFor } from '../cells/cellFiles';
+import { getCellIdColumns } from '../cells/cellIdColumns';
 
 /**
  * Opens a Xenium output bundle from its `experiment.xenium` manifest.
@@ -41,8 +42,8 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 		panel.webview.html = this.html(panel.webview);
 		// Keep groups and interaction settings current in an open viewer.
 		const settingsWatcher = vscode.workspace.onDidChangeConfiguration(event => {
-			if (event.affectsConfiguration('tiffVisualizer.channels') || event.affectsConfiguration('tiffVisualizer.transcripts') || event.affectsConfiguration('tiffVisualizer.scrollToZoom')) {
-				void panel.webview.postMessage({ type: 'settings', scrollToZoom: this.getScrollToZoom(), channelDefaults: this.getChannelDefaults(), transcriptGroups: this.getTranscriptGroups() });
+			if (event.affectsConfiguration('tiffVisualizer.channels') || event.affectsConfiguration('tiffVisualizer.transcripts') || event.affectsConfiguration('tiffVisualizer.scrollToZoom') || event.affectsConfiguration('tiffVisualizer.cells.cellIdCol')) {
+				void panel.webview.postMessage({ type: 'settings', scrollToZoom: this.getScrollToZoom(), channelDefaults: this.getChannelDefaults(), transcriptGroups: this.getTranscriptGroups(), cellIdCols: getCellIdColumns() });
 			}
 		});
 		panel.onDidDispose(() => settingsWatcher.dispose());
@@ -151,6 +152,7 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 			scrollToZoom: this.getScrollToZoom(),
 			channelDefaults: this.getChannelDefaults(),
 			transcriptGroups: this.getTranscriptGroups(),
+			cellIdCols: getCellIdColumns(),
 		};
 		return /* html */`<!DOCTYPE html>
 <html lang="en">

@@ -32,8 +32,8 @@
         </div>
       {/each}
       <form class="cells-add" onsubmit={add}>
-        <input type="text" class="measure-input" bind:value={text} spellcheck="false" aria-label="Path of a cell boundaries .parquet file" placeholder="Add cells (cell_boundaries.parquet)"
-          title="A Xenium-style cell_boundaries.parquet (cell_id, vertex_x, vertex_y in microns), shown as another cell set. Relative paths start at the workspace folder.">
+        <input type="text" class="measure-input" bind:value={text} spellcheck="false" aria-label="Path of a cell boundaries .parquet file or a label mask image" placeholder="Add cells (.parquet or mask .tif)"
+          title="A Xenium-style cell_boundaries.parquet (cell_id, vertex_x, vertex_y in microns), or a label mask image (.tif where cell n is painted with the whole number n and 0 is background), shown as another cell set. Relative paths start at the workspace folder.">
         <button type="button" class="measure-button" title="Choose a file" onclick={cells.browseSource}>Browse…</button>
         <button type="submit" class="measure-button" disabled={!text.trim()}>Add</button>
       </form>

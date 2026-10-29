@@ -87,10 +87,10 @@ export function isAbsolutePath(path: string): boolean {
 	return path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith('\\\\');
 }
 
-/** Short display name for a path typed or picked by the user: the file name without .parquet. */
+/** Short display name for a path typed or picked by the user: the file name without its extension. */
 export function sourceNameFromPath(path: string): string {
 	const file = path.split(/[\\/]/).filter(Boolean).pop() ?? path;
-	return file.replace(/\.parquet$/i, '') || path;
+	return file.replace(/\.(parquet|tiff?|csv|tsv)$/i, '') || path;
 }
 
 function text(value: unknown): string | undefined {

@@ -5,7 +5,11 @@ import { polygonArea, polygonPerimeter, type PolygonSet } from './polygon-set.js
 export function addShapeColumns(table: CellTable, set: PolygonSet, pixelSizeUm: number): void {
 	const perRow = (compute: (polygon: number) => number): ((row: number) => number) => {
 		const values = new Float64Array(table.count).fill(NaN);
-		for (let polygon = 0; polygon < set.count; polygon++) { if (set.rows[polygon] >= 0) { values[set.rows[polygon]] = compute(polygon); } }
+		// A cell drawn as several polygons measures as their sum.
+		for (let polygon = 0; polygon < set.count; polygon++) {
+			const row = set.rows[polygon];
+			if (row >= 0) { values[row] = (Number.isNaN(values[row]) ? 0 : values[row]) + compute(polygon); }
+		}
 		return row => values[row];
 	};
 	const area = perRow(polygon => polygonArea(set, polygon) * pixelSizeUm * pixelSizeUm);

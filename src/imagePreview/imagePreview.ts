@@ -1,3 +1,4 @@
+import { getCellIdColumns } from '../cells/cellIdColumns';
 import type { HostToViewerMessage } from '../../shared/viewer-protocol';
 import type { ChannelDefaults } from '../../shared/viewer-settings';
 import * as vscode from 'vscode';
@@ -31,6 +32,7 @@ interface WebviewImageSettings extends ImageSettings {
 	navigationShortcuts: Record<string, string[]>;
 	channelDefaults: ChannelDefaults;
 	cellsAutoOpenPanel: 'auto' | 'always' | 'never';
+	cellIdCols: string[];
 	/** Experimental rectangle reads; see the setting's description. */
 	experimentalRegionDecode: boolean;
 }
@@ -232,6 +234,7 @@ export class ImagePreview extends MediaPreview {
 				fitUpscale: this.getFitUpscale(),
 				channelDefaults: this.getChannelDefaults(),
 				cellsAutoOpenPanel: this.getCellsAutoOpenPanel(),
+				cellIdCols: getCellIdColumns(),
 				experimentalRegionDecode: this.getRegionDecodeEnabled()
 			};
 
@@ -256,7 +259,8 @@ export class ImagePreview extends MediaPreview {
 				|| e.affectsConfiguration('tiffVisualizer.scrollToZoom')
 				|| e.affectsConfiguration('tiffVisualizer.fitUpscale')
 				|| e.affectsConfiguration('tiffVisualizer.channels')
-				|| e.affectsConfiguration('tiffVisualizer.cells.autoOpenPanel')) {
+				|| e.affectsConfiguration('tiffVisualizer.cells.autoOpenPanel')
+				|| e.affectsConfiguration('tiffVisualizer.cells.cellIdCol')) {
 				updateSettings('configuration-changed');
 			}
 		}));
@@ -418,6 +422,7 @@ export class ImagePreview extends MediaPreview {
 			fitUpscale: this.getFitUpscale(),
 			channelDefaults: this.getChannelDefaults(),
 			cellsAutoOpenPanel: this.getCellsAutoOpenPanel(),
+			cellIdCols: getCellIdColumns(),
 			experimentalRegionDecode: this.getRegionDecodeEnabled()
 		};
 
@@ -1301,7 +1306,8 @@ export class ImagePreview extends MediaPreview {
 			scrollToZoom: this.getScrollToZoom(),
 			fitUpscale: this.getFitUpscale(),
 			channelDefaults: this.getChannelDefaults(),
-			cellsAutoOpenPanel: this.getCellsAutoOpenPanel()
+			cellsAutoOpenPanel: this.getCellsAutoOpenPanel(),
+			cellIdCols: getCellIdColumns()
 		};
 
 		const nonce = getNonce();
@@ -1345,8 +1351,9 @@ export class ImagePreview extends MediaPreview {
 		const layeredPreviewFallbackUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'layeredPreviewFallback.bundle.js'));
 		const layerDocumentWriterUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'layerDocumentWriter.bundle.js'));
 		const imagejRoiUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'imagejRoi.bundle.js'));
-		// Named here so the Cells panel can read a segmentation; nothing fetches either until a file is added.
+		// Named here so the Cells section can read a segmentation, table or mask; nothing fetches either until a file is added.
 		const cellsWorkerUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'xeniumCellsWorker.bundle.js'));
+		const tileWorkerUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'xeniumTileWorker.bundle.js'));
 		const transcriptsWasmUri = this._webviewEditor.webview.asWebviewUri(this.extensionResource('media', 'wasm', 'transcripts-wasm.wasm'));
 		const vendorAssets = {
 			wasm: wasmUri.toString(),
@@ -1356,6 +1363,7 @@ export class ImagePreview extends MediaPreview {
 				'layeredDecodeWorker.bundle.js': layeredDecodeWorkerUri.toString(),
 				'pngDecodeWorker.bundle.js': pngDecodeWorkerUri.toString(),
 				'xeniumCellsWorker.bundle.js': cellsWorkerUri.toString(),
+				'xeniumTileWorker.bundle.js': tileWorkerUri.toString(),
 			},
 			transcriptsWasm: transcriptsWasmUri.toString(),
 			jxlWasm: jxlWasmUri.toString(),

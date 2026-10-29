@@ -4,6 +4,7 @@ import type { CellTable } from '../cells/cell-table.js';
 import type { PolygonSet } from '../cells/polygon-set.js';
 import type { GenePoints, TranscriptIndex } from '../transcripts/transcript-data.js';
 import { RangeUnavailable, readRange } from '../ranged-source.js';
+import { readMaskImage } from '../cells/mask-reader.js';
 
 export interface XeniumCellFiles { cells: string; cellBoundaries: string; nucleusBoundaries?: string }
 
@@ -92,10 +93,47 @@ export type LoadedSource =
 	| { kind: 'boundaries'; table: CellTable; cells: PolygonSet };
 
 /** A metrics table or a boundaries file: from a webview URI, or from bytes the host already read. */
+export interface LoadOptions {
+	/** Extra names for the cell id column (`tiffVisualizer.cells.cellIdCol`). */
+	idColumns?: readonly string[];
+	/** For a mask: scene pixels per mask pixel, from the mask's size. Throws when the mask does not fit the image. Default 1. */
+	maskScale?: (width: number, height: number) => number;
+}
+
+/** Outline tolerance for traced masks, in mask pixels: removes the staircase, keeps the shape. */
+const MASK_EPSILON = 0.8;
+
+export const isMaskFile = (name: string | undefined): boolean => /\.tiff?$/i.test(name ?? '');
+
+/** A label mask image: traced into outlines (Rust, in the cell worker) with a table of one row per label. */
+async function loadMask(input: { src?: string; bytes?: ArrayBuffer; kind: string }, pixelSizeUm: number, options: LoadOptions): Promise<LoadedSource> {
+	if (input.kind === 'table') { throw new Error('A mask image gives outlines, not a table of measurements. Add it as a cell set.'); }
+	const [bytes, wasm] = await Promise.all([Promise.resolve(input.bytes?.slice(0) ?? (input.src ? fetchBuffer(input.src) : null)), loadTranscriptsWasm()]);
+	if (!bytes) { throw new Error('There is nothing to read.'); }
+	const mask = await readMaskImage(bytes);
+	const scale = options.maskScale?.(mask.width, mask.height) ?? 1;
+	const worker = await createWorker();
+	try {
+		return await new Promise<LoadedSource>((resolve, reject) => {
+			worker.onerror = event => reject(new Error(event.message || 'The cell loader failed.'));
+			worker.onmessage = (event: MessageEvent) => {
+				const data = event.data;
+				if (!data?.ok) { reject(new Error(String(data?.error ?? 'The mask could not be read.'))); return; }
+				const rowOfId = new Map<string, number>();
+				(data.table.ids as string[]).forEach((id, row) => rowOfId.set(id, row));
+				resolve({ kind: 'boundaries', table: { ...data.table, rowOfId }, cells: data.cells });
+			};
+			worker.postMessage({ id: 1, type: 'mask', data: mask.data.buffer, bytes: mask.data.BYTES_PER_ELEMENT, width: mask.width, height: mask.height, scale, pixelSizeUm, epsilon: MASK_EPSILON, wasm }, [mask.data.buffer]);
+		});
+	} finally { worker.terminate(); }
+}
+
 export async function loadCellSource(
-	input: { src?: string; bytes?: ArrayBuffer; kind: 'table' | 'boundaries' | 'unknown' },
+	input: { src?: string; bytes?: ArrayBuffer; kind: 'table' | 'boundaries' | 'unknown'; /** The file's name or path, to tell a mask image from a table. */ name?: string },
 	pixelSizeUm: number,
+	options: LoadOptions = {},
 ): Promise<LoadedSource> {
+	if (isMaskFile(input.name)) { return loadMask(input, pixelSizeUm, options); }
 	const [buffer, wasm] = await Promise.all([Promise.resolve(input.bytes?.slice(0) ?? (input.src ? fetchBuffer(input.src) : null)), loadTranscriptsWasm()]);
 	if (!buffer) { throw new Error('There is nothing to read.'); }
 	const worker = await createWorker();
@@ -110,7 +148,7 @@ export async function loadCellSource(
 				const table: CellTable = { ...data.table, rowOfId };
 				resolve(data.kind === 'boundaries' ? { kind: 'boundaries', table, cells: data.cells } : { kind: 'table', table });
 			};
-			worker.postMessage({ id: 1, type: 'source', buffer, kind: input.kind, pixelSizeUm, wasm }, [buffer]);
+			worker.postMessage({ id: 1, type: 'source', buffer, kind: input.kind, pixelSizeUm, wasm, idColumns: options.idColumns ?? [] }, [buffer]);
 		});
 	} finally { worker.terminate(); }
 }

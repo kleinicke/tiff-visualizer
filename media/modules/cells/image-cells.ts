@@ -11,12 +11,15 @@
 import { CellsWorkspace, type CellsWorkspaceHost, type WorkspaceFile } from './cells-workspace.js';
 import type { CellsPanelModel } from './cells-model.js';
 import { ImageCellsOverlay } from './image-cells-overlay.js';
+import { maskScaleFor } from './mask-cells.js';
 
 export interface ImageCellsHost {
 	getImageElement: () => HTMLElement | null;
 	getImageSize: () => { width: number; height: number } | null;
 	/** Microns per pixel, or null when the image has no micron scale. */
 	getMicronsPerPixel: () => number | null;
+	/** `tiffVisualizer.cells.cellIdCol`: other names for the cell id column. */
+	getIdColumns: () => string[];
 	postMessage: (message: { type: 'resolveCell'; requestId: number; text: string } | { type: 'browseCell'; requestId: number }) => void;
 	/** The workspace changed: re-render the panel and save state. */
 	onChange: () => void;
@@ -70,7 +73,10 @@ export class ImageCells {
 		if (this.workspace) { return this.workspace; }
 		const pixelSize = this.host.getMicronsPerPixel() ?? 1;
 		const host: CellsWorkspaceHost = {
-			load: async file => (await import('../scene/xenium-cells.js')).loadCellSource({ src: file.src, bytes: file.bytes, kind: file.kind }, pixelSize),
+			load: async file => (await import('../scene/xenium-cells.js')).loadCellSource(
+				{ src: file.src, bytes: file.bytes, kind: file.kind, name: file.path }, pixelSize,
+				{ idColumns: this.host.getIdColumns(), maskScale: (width, height) => maskScaleFor({ width, height }, this.host.getImageSize()) },
+			),
 			resolve: async text => {
 				const file = await this.ask('resolveCell', text);
 				if (!file) { throw new Error('Cancelled'); }
