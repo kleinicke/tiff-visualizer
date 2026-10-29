@@ -26,6 +26,8 @@ export class ZoomController {
 	 */
 	onScaleChanged: (() => void) | null = null;
 	private gestureScale: number | null = null;
+	/** With `scrollToZoom`: how far dragging has moved the image on an axis it has no scroll range on. */
+	private panOffset = { x: 0, y: 0 };
 	private touchPinch: { distance: number, scale: number, x: number, y: number } | null = null;
 
 	private viewport() {
@@ -139,6 +141,8 @@ export class ZoomController {
 				this.imageElement.style.margin = 'auto';
 			}
 			window.scrollTo(0, 0);
+			this.panOffset = { x: 0, y: 0 };
+			this.imageElement.style.translate = '';
 			// Clear zoom fields but keep other state (peerImageUris, etc.)
 			const existing = this.vscode.getState() || {};
 			this.vscode.setState({ ...existing, scale: 'fit', offsetX: 0, offsetY: 0 });
@@ -183,6 +187,9 @@ export class ZoomController {
 			this.imageElement.style.marginTop = canScrollY ? '0' : 'auto';
 			this.imageElement.style.marginBottom = canScrollY ? '0' : 'auto';
 
+			if (!this.scrollToZoom) { this.panOffset = { x: 0, y: 0 }; }
+			this.applyPanOffset();
+
 			// Recalculate element position after layout change
 			const rectAfter = this.imageElement.getBoundingClientRect();
 			const elemLeftDocAfter = window.scrollX + rectAfter.left;
@@ -200,6 +207,15 @@ export class ZoomController {
 			newScrollY = Math.min(Math.max(0, newScrollY), maxScrollY);
 
 			window.scrollTo(newScrollX, newScrollY);
+
+			if (this.scrollToZoom) {
+				// Whatever the scroll range could not absorb is taken by the offset, which keeps the image point under the cursor.
+				const rectNow = this.imageElement.getBoundingClientRect();
+				this.panOffset.x += centerX - (rectNow.left + centerXImage * this.scale);
+				this.panOffset.y += centerY - (rectNow.top + centerYImage * this.scale);
+				this.clampPan();
+				this.applyPanOffset();
+			}
 
 			// Merge zoom fields into existing state to avoid erasing app-level fields
 			const existing = this.vscode.getState() || {};
@@ -326,7 +342,7 @@ export class ZoomController {
 	 * swallow the click that follows the release.
 	 */
 	beginPan(event: MouseEvent, onEnd: (moved: boolean) => void): boolean {
-		if (!this.scrollToZoom || !this.hasLoadedImage || this.scale === 'fit' || (event.button !== 0 && event.button !== 1)) { return false; }
+		if (!this.scrollToZoom || !this.hasLoadedImage || (event.button !== 0 && event.button !== 1)) { return false; }
 		event.preventDefault();
 		let last = { x: event.clientX, y: event.clientY };
 		let moved = false;
@@ -334,7 +350,8 @@ export class ZoomController {
 		const move = (e: MouseEvent) => {
 			if (!moved && Math.hypot(e.clientX - event.clientX, e.clientY - event.clientY) < ZoomController.DRAG_THRESHOLD) { return; }
 			moved = true;
-			window.scrollBy(last.x - e.clientX, last.y - e.clientY);
+			const dx = e.clientX - last.x, dy = e.clientY - last.y;
+			this.panBy(dx, dy);
 			last = { x: e.clientX, y: e.clientY };
 		};
 		const up = () => {
@@ -349,6 +366,42 @@ export class ZoomController {
 	}
 
 	static readonly DRAG_THRESHOLD = 4;
+
+	/**
+	 * Move the image by the drag distance. A moved offset returns to zero first, then the page
+	 * scrolls, and whatever scrolling cannot absorb (the page edge) becomes the offset.
+	 */
+	private panBy(dx: number, dy: number) {
+		const back = (offset: number, delta: number) => (offset * delta < 0 ? Math.sign(delta) * Math.min(Math.abs(delta), Math.abs(offset)) : 0);
+		const returnX = back(this.panOffset.x, dx), returnY = back(this.panOffset.y, dy);
+		this.panOffset.x += returnX;
+		this.panOffset.y += returnY;
+		const wantX = dx - returnX, wantY = dy - returnY;
+		const beforeX = window.scrollX, beforeY = window.scrollY;
+		window.scrollBy(0 - wantX, 0 - wantY);
+		this.panOffset.x += wantX + (window.scrollX - beforeX);
+		this.panOffset.y += wantY + (window.scrollY - beforeY);
+		this.clampPan();
+		this.applyPanOffset();
+	}
+
+	private applyPanOffset() {
+		if (!this.imageElement) { return; }
+		const { x, y } = this.panOffset;
+		this.imageElement.style.translate = x || y ? `${x}px ${y}px` : '';
+		this.onScaleChanged?.();
+	}
+
+	/** Keep some of the image in view however far it is dragged. */
+	private clampPan() {
+		if (!this.imageElement) { return; }
+		const keep = 32;
+		const width = document.documentElement.clientWidth, height = document.documentElement.clientHeight;
+		const limitX = Math.max(0, (width + Math.min(width, this.imageElement.offsetWidth)) / 2 - keep);
+		const limitY = Math.max(0, (height + Math.min(height, this.imageElement.offsetHeight)) / 2 - keep);
+		this.panOffset.x = Math.min(limitX, Math.max(-limitX, this.panOffset.x));
+		this.panOffset.y = Math.min(limitY, Math.max(-limitY, this.panOffset.y));
+	}
 
 	handleGesture(event: Event & { scale?: number }) {
 		if (!this.imageElement || !this.hasLoadedImage) { return; }

@@ -6,20 +6,27 @@ new Function('module', 'exports', compiled.outputFiles[0].text)(loaded, loaded.e
 const { ZoomController } = loaded.exports;
 
 const scrolls = [];
+const scrollRange = { scrollWidth: 800, scrollHeight: 600 };
 const listeners = {};
 global.window = {
-  scrollBy: (x, y) => scrolls.push([x, y]),
+  scrollX: 0,
+  scrollY: 0,
+  scrollBy(x, y) {
+    scrolls.push([x, y]);
+    this.scrollX = Math.min(scrollRange.scrollWidth - 800, Math.max(0, this.scrollX + x));
+    this.scrollY = Math.min(scrollRange.scrollHeight - 600, Math.max(0, this.scrollY + y));
+  },
   addEventListener: (type, fn) => { listeners[type] = fn; },
   removeEventListener: type => { delete listeners[type]; },
 };
-global.document = { body: { classList: { contains: () => false } }, documentElement: { classList: { contains: () => false }, clientWidth: 800, clientHeight: 600 } };
+global.document = { body: { classList: { contains: () => false } }, scrollingElement: scrollRange, documentElement: { classList: { contains: () => false }, clientWidth: 800, clientHeight: 600 } };
 
 function create({ scrollToZoom, scale = 2, isMac = true }) {
   const classes = new Set();
   const container = { classList: { contains: name => classes.has(name), add: name => classes.add(name), remove: name => classes.delete(name) } };
   const controller = new ZoomController({ isMac, constants: {}, settings: { scrollToZoom } }, { getState: () => ({ scale }) });
   controller.container = container;
-  controller.imageElement = {};
+  controller.imageElement = { style: {}, offsetWidth: 200, offsetHeight: 100 };
   controller.hasLoadedImage = true;
   controller.scale = scale;
   controller.firstZoom = () => { controller.scale = 1; };
@@ -52,35 +59,81 @@ assert.ok(controller.scale < 2);
 controller.handleWheelZoom(wheel(), false, false);
 assert.ok(controller.scale > 1);
 
-({ controller } = create({ scrollToZoom: true, scale: 'fit' }));
-assert.equal(controller.beginPan({ button: 0, clientX: 0, clientY: 0, preventDefault() {} }, () => {}), false);
 
 ({ controller } = create({ scrollToZoom: false }));
 assert.equal(controller.beginPan({ button: 0, clientX: 0, clientY: 0, preventDefault() {} }, () => {}), false);
 
+function press(controller, x = 100, y = 100) {
+  let ended = null;
+  assert.equal(controller.beginPan({ button: 0, clientX: x, clientY: y, preventDefault() {} }, moved => { ended = moved; }), true);
+  return { move: (mx, my) => listeners.mousemove({ clientX: mx, clientY: my }), release: () => { listeners.mouseup({}); return ended; } };
+}
+const translate = c => c.imageElement.style.translate;
+
+scrollRange.scrollWidth = 1600; scrollRange.scrollHeight = 1200;
+window.scrollX = 300; window.scrollY = 300;
 ({ controller } = create({ scrollToZoom: true }));
-let ended = null;
-let prevented = false;
-const { classes } = { classes: controller.container.classList };
-assert.equal(controller.beginPan({ button: 0, clientX: 100, clientY: 100, preventDefault() { prevented = true; } }, moved => { ended = moved; }), true);
-assert.equal(prevented, true);
+let drag = press(controller);
 assert.equal(controller.container.classList.contains('panning'), true);
-listeners.mousemove({ clientX: 102, clientY: 101 });
+drag.move(102, 101);
 assert.deepEqual(scrolls, []);
-listeners.mousemove({ clientX: 90, clientY: 120 });
-assert.deepEqual(scrolls, [[10, -20]]);
-listeners.mousemove({ clientX: 85, clientY: 120 });
-assert.deepEqual(scrolls[1], [5, 0]);
-listeners.mouseup({});
-assert.equal(ended, true);
+drag.move(90, 120);
+assert.deepEqual([window.scrollX, window.scrollY], [310, 280]);
+assert.equal(translate(controller), '');
+assert.equal(drag.release(), true);
 assert.equal(controller.container.classList.contains('panning'), false);
 assert.equal(listeners.mousemove, undefined);
 
 ({ controller } = create({ scrollToZoom: true }));
-controller.beginPan({ button: 0, clientX: 100, clientY: 100, preventDefault() {} }, moved => { ended = moved; });
-listeners.mousemove({ clientX: 102, clientY: 101 });
-listeners.mouseup({});
-assert.equal(ended, false);
+drag = press(controller);
+drag.move(102, 101);
+assert.equal(drag.release(), false);
+
+window.scrollX = 790; window.scrollY = 590;
+({ controller } = create({ scrollToZoom: true }));
+drag = press(controller, 500, 500);
+drag.move(400, 400);
+assert.deepEqual([window.scrollX, window.scrollY], [800, 600]);
+assert.equal(translate(controller), '-90px -90px');
+drag.move(380, 400);
+assert.equal(translate(controller), '-110px -90px');
+drag.move(480, 400);
+assert.equal(translate(controller), '-10px -90px');
+assert.deepEqual([window.scrollX, window.scrollY], [800, 600]);
+drag.move(500, 400);
+assert.equal(translate(controller), '0px -90px');
+assert.equal(window.scrollX, 790);
+drag.release();
+
+window.scrollX = 0; window.scrollY = 0;
+({ controller } = create({ scrollToZoom: true }));
+controller.imageElement.offsetWidth = 1600;
+drag = press(controller);
+drag.move(150, 130);
+assert.equal(translate(controller), '50px 30px');
+drag.move(10000, 130);
+assert.equal(translate(controller), '768px 30px');
+drag.release();
+
+scrollRange.scrollWidth = 800; scrollRange.scrollHeight = 600;
+for (const scale of [0.5, 'fit']) {
+  window.scrollX = 0; window.scrollY = 0;
+  ({ controller } = create({ scrollToZoom: true, scale }));
+  drag = press(controller);
+  drag.move(150, 90);
+  assert.equal(translate(controller), '50px -10px');
+  drag.move(10000, 90);
+  assert.equal(translate(controller), '468px -10px');
+  drag.release();
+}
+
+let redraws = 0;
+({ controller } = create({ scrollToZoom: true }));
+controller.onScaleChanged = () => { redraws++; };
+drag = press(controller);
+drag.move(150, 100);
+assert.ok(redraws > 0);
+drag.release();
 
 ({ controller } = create({ scrollToZoom: true }));
 assert.equal(controller.beginPan({ button: 2, clientX: 0, clientY: 0, preventDefault() {} }, () => {}), false);
