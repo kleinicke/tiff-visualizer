@@ -3,7 +3,7 @@ export type NavigationShortcuts = Record<string, readonly string[]>;
 type LayoutKeyboard = { getLayoutMap?: () => Promise<Map<string, string>>; addEventListener?: EventTarget['addEventListener'] };
 const defaults = [
   ['BracketLeft', 'BracketRight'], ['ArrowLeft', 'ArrowRight'],
-  ['Shift+Comma', 'Shift+Period'], ['Shift+BracketLeft', 'Shift+BracketRight'],
+  ['<', '>'], ['{', '}'],
 ];
 const literals = [['[', ']'], [], ['<', '>'], ['{', '}']];
 const names: Record<string, string> = { ArrowLeft: '←', ArrowRight: '→', PageUp: 'PgUp', PageDown: 'PgDn' };
@@ -18,6 +18,24 @@ function parse(value: string) {
 
 export class NavigationKeys {
   private labels = new Map<string, string>();
+  private hasLayoutMap = false;
+
+  /** US symbol shortcuts stay familiar; other layouts get distinct unshifted pairs. */
+  private defaults(): readonly (readonly string[])[] {
+    const nonUs = Object.entries(fallbackLabels).some(([code, label]) =>
+      code !== 'IntlBackslash' && this.labels.has(code) && this.labels.get(code) !== label);
+    if (!nonUs) return defaults;
+    const candidates = [
+      ['BracketLeft', 'BracketRight'], ['Comma', 'Period'], ['Semicolon', 'Quote'],
+      ['Minus', 'Equal'], ['PageUp', 'PageDown'], ['Home', 'End'],
+    ];
+    const available = candidates.filter(pair => pair.every(code => {
+      if (names[code] || code === 'Home' || code === 'End') return true;
+      const label = this.labels.get(code);
+      return label === undefined ? !this.hasLayoutMap : Array.from(label).length === 1 && label.trim() !== '' && !/^[a-z0-9]$/i.test(label);
+    }));
+    return [available[0], defaults[1], available[1], available[2]].map(pair => pair || []);
+  }
   constructor(private readonly settings: () => unknown, private readonly changed: () => void) {}
 
   /** Layout lookup is optional in webviews; observed unmodified keys fill gaps. */
@@ -26,7 +44,7 @@ export class NavigationKeys {
     const refresh = async () => {
       try {
         const map = await keyboard?.getLayoutMap?.();
-        if (map) { this.labels = new Map(map); this.changed(); }
+        if (map) { this.labels = new Map(map); this.hasLayoutMap = true; this.changed(); }
       } catch { /* Embedded hosts may disallow keyboard-map access. */ }
     };
     void refresh();
@@ -38,7 +56,7 @@ export class NavigationKeys {
   }
 
   observe(event: KeyboardEvent) {
-    if (!event.code || event.isComposing || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey || Array.from(event.key).length !== 1) return;
+    if (!event.code || event.isComposing || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey || (Array.from(event.key).length !== 1 && event.key !== 'Dead')) return;
     if (this.labels.get(event.code) !== event.key) {
       this.labels.set(event.code, event.key); this.changed();
     }
@@ -50,7 +68,17 @@ export class NavigationKeys {
     if (Array.isArray(pair) && pair.length === 2 && pair.every(v => typeof v === 'string' && parse(v)) && pair[0] !== pair[1]) {
       return { keys: pair, custom: true };
     }
-    return { keys: defaults[position] || [], custom: false };
+    return { keys: this.defaults()[position] || [], custom: false };
+  }
+
+  /** Map controls to available bindings; collection arrows belong to files. */
+  bindings(controls: readonly { isChoice?: boolean }[], collection: boolean): number[] {
+    if (!collection) return controls.map((_, i) => controls.length === 1 && !controls[0]?.isChoice ? 1 : i);
+    const available = defaults.map((_, i) => i).filter(i => !this.pair(i).keys.some(value => {
+      const binding = parse(value)!;
+      return !binding.shift && (binding.key === 'ArrowLeft' || binding.key === 'ArrowRight');
+    }));
+    return controls.map((_, i) => available[i] ?? -1);
   }
 
   step(event: KeyboardEvent, position: number): number {
@@ -63,7 +91,8 @@ export class NavigationKeys {
         ? event.shiftKey === binding.shift && event.code === binding.key
         : (!binding.shift || event.shiftKey) && event.key === binding.key)) return i === 0 ? -1 : 1;
     }
-    if (!custom && position === 0 && !event.shiftKey && !event.ctrlKey && !event.altKey) {
+    if (!custom && position === 0 && !event.shiftKey && !event.ctrlKey && !event.altKey &&
+      ![1, 2, 3].some(i => this.pair(i).keys.includes(event.code))) {
       if (event.code === 'PageUp') return -1;
       if (event.code === 'PageDown') return 1;
     }

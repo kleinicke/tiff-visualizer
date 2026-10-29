@@ -418,9 +418,67 @@ function testViewModeAndAcceleratorConsistency() {
 	console.log('✅ normal views render directly, Layers retain automatic GPU selection, and live histograms stay bounded');
 }
 
+function testContainerStateBelongsToTheCollectionEntry() {
+	const originalLoad = Module._load;
+	const { URI } = require('vscode-uri');
+	Module._load = function (request, ...args) {
+		if (request === 'vscode') return { Uri: URI, EventEmitter: class { event = () => {}; } };
+		return originalLoad.call(this, request, ...args);
+	};
+	try {
+		const { ImagePreview } = require('../out/src/imagePreview/imagePreview.js');
+		const preview = Object.create(ImagePreview.prototype);
+		const first = URI.file('/collection/first.dcm');
+		const second = URI.file('/collection/second.dcm');
+		preview._imageCollection = [first, second];
+		preview._collectionDatasets = new Map();
+		preview._currentImageIndex = 0;
+		preview._webviewEditor = { webview: { asWebviewUri: uri => uri } };
+		preview.ensureLocalResourceRoots = () => {};
+		preview.updateImageCollectionOverlay = () => {};
+		const messages = [];
+		preview.postViewerMessage = message => messages.push(message);
+		preview.registerDicomFrames(3);
+		assert.equal(preview.datasetManifest.series[0].planes.length, 3);
+		preview._datasetCurrentResource = first;
+		preview._currentImageIndex = 1;
+		preview.postSwitchToImage(second, undefined, 0, undefined);
+		assert.equal(preview.datasetManifest, undefined);
+		assert.equal(preview.getCurrentImage().toString(), second.toString());
+		assert.equal(messages.at(-1).collection.totalImages, 2);
+		preview.registerDicomFrames(5);
+		assert.equal(preview.datasetManifest.series[0].planes.length, 5);
+		assert.equal(preview.datasetManifest.series[0].planes[0].resourceUri, second.toString());
+		assert.deepEqual(preview.imageCollection, [first, second]);
+		// An explicitly opened folder contains separate single-frame resources;
+		// reopening the first file cannot rediscover its sibling slices.
+		const folder = {
+			id: 'folder-study', kind: 'dicom', label: 'Folder study',
+			initialSeriesIndex: 0, initialCoordinates: { z: 0 },
+			series: [{ id: 'series', label: 'Series', axes: [{ key: 'z', label: 'Z', size: 2 }],
+				planes: [first, URI.file('/study/slice-2.dcm')].map((uri, z) => ({
+					coordinates: { z }, resourceUri: uri.toString(), format: 'dicom', frameIndex: 0,
+				})) }],
+		};
+		preview._currentImageIndex = 0;
+		preview.setDatasetManifest(folder);
+		preview._currentImageIndex = 1;
+		preview.postSwitchToImage(second, undefined, 0, undefined);
+		assert.equal(preview.datasetManifest.series[0].planes.length, 5);
+		preview._currentImageIndex = 0;
+		preview.postSwitchToImage(first, undefined, 0, undefined);
+		assert.equal(preview.datasetManifest, folder);
+		assert.equal(messages.at(-2).type, 'switchToImage');
+		assert.equal(messages.at(-1).type, 'setDataset');
+		assert.equal(messages.at(-1).manifest.series[0].planes[1].resourceUri, 'file:///study/slice-2.dcm');
+		console.log('✅ switching container entries clears the outgoing dataset and registers the incoming file');
+	} finally { Module._load = originalLoad; }
+}
+
 function main() {
 	console.log('🧪 Running collection-switch render regression tests...\n');
 	testMessageFlowReplaysOnSameFormatTypeSwitch();
+	testContainerStateBelongsToTheCollectionEntry();
 	testDeferredRenderUsesSafeCanvasContextHelper();
 	testSwitchKeepsOutgoingFrameUntilReplacementIsReady();
 	testNetCdfControlsUseSeamlessReloads();
