@@ -634,7 +634,7 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 			updateTiffPageOverlay();
 			scheduleSaveState();
 		},
-		getCells: () => imageCells ? imageCells.model() : idleCells(),
+		getCells: () => { requestConfiguredCells(); return imageCells ? imageCells.model() : idleCells(); },
 		compact: true,
 		getGroups: (): ResolvedChannelGroup[] => resolveChannelGroups(allChannelGroups(), channelPlanes),
 		getGroupSolo: () => channelGroupSolo,
@@ -1058,6 +1058,15 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 	 * The Cells section at the end of the Channels panel. Until its first action
 	 * the cells code is not even loaded; the action loads it and then runs.
 	 */
+	/** Ask the extension, once per file, which cell files settings.json names for it; nothing is created unless it names some. */
+	let configuredCellsResource: string | null = null;
+	function requestConfiguredCells(): void {
+		const resource = currentResource();
+		if (!resource || configuredCellsResource === resource) { return; }
+		configuredCellsResource = resource;
+		vscode.postMessage({ type: 'configuredCells', resource });
+	}
+
 	const idleCells = (): CellsPanelModel => {
 		const after = (action: (model: CellsPanelModel) => void) => { void loadImageCells().then(cells => action(cells.model())); };
 		return {
@@ -4332,6 +4341,12 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 
 			case 'cellSource':
 				imageCells?.onHostFile(message);
+				break;
+
+			case 'configuredCellSources':
+				if (message.resource === currentResource() && Array.isArray(message.specs) && message.specs.length > 0) {
+					void loadImageCells().then(cells => cells.onConfigured(message.resource, message.specs));
+				}
 				break;
 
 			case 'toggleMeasure':

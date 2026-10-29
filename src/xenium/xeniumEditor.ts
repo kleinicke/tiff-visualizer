@@ -5,7 +5,7 @@ import {
 	buildSceneManifest, discoverCellFiles, discoverChannelFiles, expandSampleName, folderOf, parseExperiment, parseGenePanel,
 } from '../../media/modules/scene/xenium-manifest';
 import { escapeAttribute, getNonce } from '../util/dom';
-import { answerCellRequest, locate, specFor } from '../cells/cellFiles';
+import { answerCellRequest, configuredSources, specFor, type ConfiguredSource } from '../cells/cellFiles';
 import { getCellIdColumns } from '../cells/cellIdColumns';
 
 /**
@@ -17,7 +17,6 @@ import { getCellIdColumns } from '../cells/cellIdColumns';
  * webview cannot: read the manifest and list the folder, then hand over the
  * channel files as webview URIs.
  */
-interface ConfiguredSource { name: string; kind: 'table' | 'boundaries'; path: string; parent?: string; uri?: vscode.Uri }
 
 export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider {
 	public static readonly viewType = 'tiffVisualizer.xeniumViewer';
@@ -32,7 +31,7 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 		const bundleFolder = Utils.dirname(document.uri).with({ query: '', fragment: '' });
 		// Files named in the settings are served to the webview directly, so their
 		// folders must be among its resource roots; roots cannot change later.
-		const configured = await this.configuredSources(bundleFolder);
+		const configured = await configuredSources(bundleFolder, Utils.basename(bundleFolder));
 		const roots = [
 			bundleFolder, this.extensionRoot,
 			...(vscode.workspace.workspaceFolders ?? []).map(folder => folder.uri),
@@ -98,25 +97,6 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 		} catch (error) {
 			await webview.postMessage({ type: 'error', message: error instanceof Error ? error.message : String(error) });
 		}
-	}
-
-	private async configuredSources(bundleFolder: vscode.Uri): Promise<ConfiguredSource[]> {
-		const config = vscode.workspace.getConfiguration('tiffVisualizer.cells');
-		const out: ConfiguredSource[] = [];
-		for (const [setting, kind, parented] of [['cellsParquet', 'table', true], ['cellBoundariesParquet', 'boundaries', false], ['nucleusBoundariesParquet', 'boundaries', true]] as const) {
-			const entries = config.get<Record<string, unknown>>(setting, {});
-			for (const [name, value] of Object.entries(entries)) {
-				// Tables and nucleus files name the one cell set they belong to; cell boundaries are just a path.
-				const template = parented ? (value as { path?: unknown } | null)?.path : value;
-				const parent = parented ? (value as { parent?: unknown } | null)?.parent : undefined;
-				if (typeof template !== 'string' || !template.trim()) { continue; }
-				if (parented && (typeof parent !== 'string' || !parent.trim())) { continue; }
-				const uri = locate(template, bundleFolder);
-				const exists = await vscode.workspace.fs.stat(uri).then(() => true, () => false);
-				out.push({ name, kind, path: expandSampleName(template.trim(), Utils.basename(bundleFolder)), parent: typeof parent === 'string' ? parent.trim() : undefined, uri: exists ? uri : undefined });
-			}
-		}
-		return out;
 	}
 
 	private getTranscriptGroups(): Record<string, unknown> {

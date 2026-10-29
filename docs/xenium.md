@@ -64,10 +64,10 @@ Below the panels, a field with Browse… adds another set from a Xenium-style `c
 To list files for every sample without typing, name them in `settings.json`. `{sample_name}` is the name of the folder that holds `experiment.xenium`, and relative paths start at the workspace folder containing the bundle:
 
 ```json
-"tiffVisualizer.cells.cellBoundariesParquet": {
+"tiffVisualizer.cells.cellBoundaries": {
   "sam2": "sam2/{sample_name}/cell_boundaries.parquet"
 },
-"tiffVisualizer.cells.cellsParquet": {
+"tiffVisualizer.cells.cellData": {
   "xenium_segtraq": {
     "path": "segtraq/{sample_name}/{sample_name}.segtraq_cells.parquet",
     "parent": "Xenium cells"
@@ -77,7 +77,7 @@ To list files for every sample without typing, name them in `settings.json`. `{s
     "parent": "sam2"
   }
 },
-"tiffVisualizer.cells.nucleusBoundariesParquet": {
+"tiffVisualizer.cells.nucleusBoundaries": {
   "sam2_nuclei": {
     "path": "sam2/{sample_name}/nucleus_boundaries.parquet",
     "parent": "sam2"
@@ -85,7 +85,9 @@ To list files for every sample without typing, name them in `settings.json`. `{s
 }
 ```
 
-Each table or nucleus file names its one `parent`: `Xenium cells` (the bundle's own cells) or a name from `cellBoundariesParquet`. It is listed under that cell set only, and an entry whose parent does not exist is not shown. The bundle's own `cells.parquet` is always listed as the first table of Xenium cells.
+`cellBoundaries` and `cellData` take the same file types as the Add field: a `.parquet`, `.csv` or `.tsv`, and for `cellBoundaries` also a `.tif` label mask. (They were called `cellBoundariesParquet`, `cellsParquet` and `nucleusBoundariesParquet`; the old names are still read.)
+
+Each table or nucleus file names its one `parent`: `Xenium cells` (the bundle's own cells) or a name from `cellBoundaries`. It is listed under that cell set only, and an entry whose parent does not exist is not shown. The bundle's own `cells.parquet` is always listed as the first table of Xenium cells.
 
 Boundaries files are listed below the cell sets and load when you click **Load**. Table files are listed in their parent's Tables list and load into that set when you click **Load** there. A file that does not exist is shown as not found. Settings are read when the bundle opens. Files outside the workspace folders are read by the extension host and sent to the page, which is slower for large files.
 
@@ -157,6 +159,17 @@ with an `Object` column, so use:
 
 ```json
 "tiffVisualizer.cells.cellIdCol": ["Object"]
+```
+
+The same three settings work for ordinary images, where `{sample_name}` is the image's file name without its extension (`a.ome.tif` gives `a`) and relative paths start at the workspace folder. Files named there are listed in the Cells section, ready to Load, the first time the Channels panel is drawn for a file:
+
+```json
+"tiffVisualizer.cells.cellBoundaries": {
+  "cellpose": "masks/{sample_name}_mask.tif"
+},
+"tiffVisualizer.cells.cellData": {
+  "intensities": { "path": "intensities/{sample_name}.csv", "parent": "cellpose" }
+}
 ```
 
 Showing the section changes nothing: the overlay is created when the first file is added,

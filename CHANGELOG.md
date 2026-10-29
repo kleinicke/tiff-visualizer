@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Rename `tiffVisualizer.cells.cellBoundariesParquet` to `cellBoundaries`, `cellsParquet` to `cellData` and `nucleusBoundariesParquet` to `nucleusBoundaries` (the old names are still read). They accept `.parquet`, `.csv`, `.tsv` and (for `cellBoundaries`) `.tif` label masks, and now apply to the image viewer as well as Xenium bundles, with `{sample_name}` set to the image's file name without its extension
 - Cells accept TIFF label masks (unsigned integers, objects numbered from 1; traced to outlines by a Rust/WebAssembly tracer with a TypeScript fallback) and CSV/TSV cell tables as well as `cell_boundaries.parquet`. `tiffVisualizer.cells.cellIdCol` lists alternative names for the cell id column (for example `["Object"]` for steinbock tables)
 - Cells for ordinary images: right-click an image and choose Cells… (or run Scientific Image Visualizer: Cells) to add a `cell_boundaries.parquet` as an outline overlay, using the same foldable Cells section the Xenium viewer has at the end of the Channels panel. `tiffVisualizer.cells.autoOpenPanel` (`auto`, `always`, `never`) opens the Channels panel by itself; `auto` only for multichannel OME-TIFF images with a micron scale. Nothing is created until a file is added
 - Xenium transcripts: larger default and maximum dot size, more opaque dots when zoomed out, and panel genes with no transcripts are listed in Add a gene with a count of 0
