@@ -38,6 +38,23 @@ function tagNumber(value: unknown): number | undefined {
 }
 
 /**
+ * The unit ImageJ writes into its ImageDescription (`unit=\u00B5m`), or null.
+ *
+ * ImageJ only has two TIFF ResolutionUnit values to offer (inch, centimetre),
+ * so for anything else it writes ResolutionUnit "none" and keeps the real unit
+ * here, with non-ASCII characters as literal `\uXXXX` escapes. XResolution is
+ * still pixels per that unit. "pixel" is ImageJ's word for "not calibrated".
+ */
+export function imageJUnit(description: unknown): string | null {
+	const text = String(description ?? '').replace(/\0/g, '');
+	if (!text.startsWith('ImageJ=')) { return null; }
+	const line = text.split(/\r?\n/).find(entry => entry.startsWith('unit='));
+	if (!line) { return null; }
+	const unit = line.slice('unit='.length).replace(/\\u([0-9a-fA-F]{4})/g, (_match, hex) => String.fromCharCode(parseInt(hex, 16))).trim();
+	return unit && !/^(pixels?|px)$/i.test(unit) ? unit : null;
+}
+
+/**
  * Derive calibration from baseline TIFF resolution tags.
  *
  * XResolution/YResolution are *pixels per unit*, so pixel size is their
@@ -48,14 +65,18 @@ export function calibrationFromTiffTags(ifd: Record<string, unknown> | null | un
 	if (!ifd) { return null; }
 	const xResolution = tagNumber(ifd.t282);
 	const yResolution = tagNumber(ifd.t283);
-	const unitTag = tagNumber(ifd.t296) ?? RESOLUTION_UNIT_INCH;
+	const declaredUnit = tagNumber(ifd.t296);
+	const unitTag = declaredUnit ?? RESOLUTION_UNIT_INCH;
 
 	if (!xResolution || !yResolution || xResolution <= 0 || yResolution <= 0) { return null; }
-	if (unitTag === RESOLUTION_UNIT_NONE) { return null; }
+	// ImageJ's own unit applies when the tag says "none" (or a decoder dropped it).
+	const imageJ = declaredUnit === undefined || declaredUnit === RESOLUTION_UNIT_NONE ? imageJUnit(ifd.t270) : null;
+	if (unitTag === RESOLUTION_UNIT_NONE && !imageJ) { return null; }
 
-	const unit = unitTag === RESOLUTION_UNIT_CENTIMETER ? 'cm'
-		: unitTag === RESOLUTION_UNIT_INCH ? 'inch'
-			: null;
+	const unit = imageJ ? imageJ
+		: unitTag === RESOLUTION_UNIT_CENTIMETER ? 'cm'
+			: unitTag === RESOLUTION_UNIT_INCH ? 'inch'
+				: null;
 	if (!unit) { return null; }
 
 	// A 1×1 resolution is the default a writer emits when it has nothing to say;
@@ -79,7 +100,7 @@ export function calibrationFromTiffTags(ifd: Record<string, unknown> | null | un
  * paths without duplicating either decoder's tag walk.
  */
 export function calibrationFromTagList(
-	tags: { name?: string; value?: unknown }[] | null | undefined,
+	tags: { tag?: number | null; name?: string; value?: unknown }[] | null | undefined,
 ): Calibration | null {
 	if (!Array.isArray(tags)) { return null; }
 	const find = (pattern: RegExp): number | undefined => {
@@ -100,6 +121,7 @@ export function calibrationFromTagList(
 		t282: find(/^xresolution$/i),
 		t283: find(/^yresolution$/i),
 		t296: find(/^resolutionunit$/i),
+		t270: tags.find(tag => tag?.tag === 270 || tag?.name === 'ImageDescription')?.value,
 	});
 }
 

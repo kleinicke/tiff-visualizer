@@ -45,6 +45,10 @@ export interface ImageSettings extends Partial<DisplaySettings> {
   /** Wheel zooms about the cursor without a modifier key, and dragging the image pans it. */
   scrollToZoom?: boolean;
   channelDefaults?: ChannelDefaults;
+  /** `tiffVisualizer.cells.autoOpenPanel`: when the Cells panel opens by itself. */
+  cellsAutoOpenPanel?: 'auto' | 'always' | 'never';
+  /** `tiffVisualizer.cells.cellIdCol`: other names for the cell id column of cell tables. */
+  cellIdCols?: string[];
   /** Experimental: read rectangles out of large tiled TIFFs. See viewport-tiles.ts. */
   experimentalRegionDecode?: boolean;
   plyVisualizerInstalled?: boolean;

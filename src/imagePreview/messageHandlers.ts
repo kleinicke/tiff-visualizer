@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import { Utils } from 'vscode-uri';
+import { answerCellRequest, configuredSources, imageSampleName, specFor } from '../cells/cellFiles';
 import { ImagePreview } from './imagePreview';
 import { PreviewState } from '../mediaPreview';
 import { SizeStatusBarEntry } from './sizeStatusBarEntry';
@@ -54,6 +56,9 @@ export class MessageRouter {
 		this.handlers.set('measureSaveBinary', new MeasureSaveBinaryMessageHandler());
 		this.handlers.set('measureSaveSidecar', new MeasureSaveSidecarMessageHandler());
 		this.handlers.set('measureRequestImport', new MeasureRequestImportMessageHandler());
+		this.handlers.set('resolveCell', new CellFileMessageHandler(false));
+		this.handlers.set('browseCell', new CellFileMessageHandler(true));
+		this.handlers.set('configuredCells', new ConfiguredCellsMessageHandler());
 		this.handlers.set('measureCheckSidecar', new MeasureCheckSidecarMessageHandler());
 	}
 
@@ -518,6 +523,34 @@ class MeasureSaveSidecarMessageHandler implements MessageHandler {
 				});
 			} catch (error) {
 				vscode.window.showErrorMessage(`Could not save ROIs: ${error}`);
+			}
+		})();
+	}
+}
+
+/** Locate a cell file for the Cells panel: a typed path, or (browse) the file dialog. */
+class CellFileMessageHandler implements MessageHandler {
+	constructor(private readonly browse: boolean) { }
+	handle(message: any, preview: ImagePreview): void {
+		const webview = preview.getWebview();
+		const image = preview.getCurrentImage();
+		void answerCellRequest(webview, message.requestId, Utils.dirname(image), webview.options.localResourceRoots ?? [], this.browse ? null : typeof message.text === 'string' ? message.text : '', imageSampleName(image));
+	}
+}
+
+/** The cell files named in settings.json for this image, resolved for the Cells panel. */
+class ConfiguredCellsMessageHandler implements MessageHandler {
+	handle(message: any, preview: ImagePreview): void {
+		const webview = preview.getWebview();
+		const image = preview.getCurrentImage();
+		void (async () => {
+			try {
+				const roots = webview.options.localResourceRoots ?? [];
+				const entries = await configuredSources(Utils.dirname(image), imageSampleName(image));
+				const specs = await Promise.all(entries.map(async entry => ({ ...await specFor(entry.name, entry.kind, entry.path, entry.uri, webview, roots, false), parent: entry.parent })));
+				await webview.postMessage({ type: 'configuredCellSources', resource: message.resource, specs });
+			} catch (error) {
+				console.error('[Cells] could not read the configured cell files', error);
 			}
 		})();
 	}

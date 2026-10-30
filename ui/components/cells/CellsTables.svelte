@@ -1,0 +1,37 @@
+<script lang="ts">
+  import type { CellSetModel } from '../../../media/modules/cells/cells-model';
+  let { set }: { set: CellSetModel } = $props();
+  let text = $state('');
+  const requested = new Set<string>();
+  $effect(() => {
+    for (const table of set.tables) {
+      if (table.state === 'available' && !requested.has(table.id)) { requested.add(table.id); set.loadTable(table.id); }
+    }
+  });
+  function add(event: Event) {
+    event.preventDefault();
+    if (!text.trim()) return;
+    set.addTable(text);
+    text = '';
+  }
+</script>
+<div class="cells-tables">
+  {#each set.tables as table (table.id)}
+    <div class="cells-table-row" class:unavailable={table.state === 'missing' || table.state === 'error'} title={table.detail ? `${table.path}\n${table.detail}` : table.path}>
+      <span class="cells-source-kind">{table.kind === 'nuclei' ? 'nuclei' : 'table'}</span>
+      <span class="cells-source-name plain">{table.name}</span>
+      <span class="cells-source-detail">{table.detail}</span>
+      {#if table.state === 'error'}<button class="measure-chip" title="Try again" onclick={() => set.loadTable(table.id)}>Retry</button>{/if}
+      {#if table.origin !== 'native' && (table.state === 'loaded' || table.state === 'error' || table.origin === 'added')}
+        <button class="cells-source-remove" title={table.origin === 'added' ? 'Remove this file' : 'Unload this file'} aria-label="Remove {table.name}" onclick={() => set.removeTable(table.id)}>×</button>
+      {/if}
+    </div>
+  {/each}
+  <form class="cells-add" onsubmit={add}>
+    <input type="text" class="measure-input" bind:value={text} spellcheck="false" aria-label="Path of a table (.parquet, .csv, .tsv) or nucleus outlines for {set.name}" placeholder="Add a table or nuclei (.csv, .tsv, .parquet, .tif)"
+      title="A table (.parquet, .csv or .tsv with an id column plus metrics, merged into {set.name} by cell id; other id column names go in tiffVisualizer.cells.cellIdCol) or nucleus outlines (a nucleus_boundaries.parquet or a nucleus mask .tif, which replaces the current nuclei). Relative paths start at the workspace folder.">
+    <button type="button" class="measure-button" title="Choose a file" onclick={set.browseTable}>Browse…</button>
+    <button type="submit" class="measure-button" disabled={!text.trim()}>Add</button>
+  </form>
+  {#if set.tableMessage}<div class="measure-note cells-source-error">{set.tableMessage}</div>{/if}
+</div>

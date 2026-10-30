@@ -1,6 +1,10 @@
-import { autoRange, channelStats, type ChannelPlane, type ChannelSettings, type ResolvedChannelGroup } from './channel-composite.js';
+import { autoRange, channelHistogram, channelStats, type ChannelGroupConfig, type ChannelPlane, type ChannelSettings, type ResolvedChannelGroup } from './channel-composite.js';
 import Channels from '../../ui/components/Channels.svelte';
 import { mountView } from '../../ui/mount.js';
+import type { CellsPanelModel } from './cells/cells-model.js';
+import type { TranscriptsPanelModel } from './transcripts/transcripts-model.js';
+
+const HISTOGRAM_BINS = 64;
 
 export interface ChannelsPanelHost {
 	getPlanes: () => ChannelPlane[];
@@ -26,17 +30,29 @@ export interface ChannelsPanelHost {
 	/** The configured groups, matched against the current channels. */
 	getGroups?: () => ResolvedChannelGroup[];
 	getGroupSolo?: () => string | null;
+	/** The Cells section, for viewers that have cell outlines; null or absent hides it. */
+	getCells?: () => CellsPanelModel | null;
+	/** Start the All channels and Groups subsections folded. Defaults to true when the host has a Cells section (the Xenium viewer). */
+	compact?: boolean;
+	/** The Transcripts section, for viewers that have transcripts; null or absent hides it. */
+	getTranscripts?: () => TranscriptsPanelModel | null;
 	/** Solo a whole group (or clear it with null). Exclusive with a single-channel solo. */
 	setGroupSolo?: (name: string | null) => void;
 }
 
 export interface ChannelGroupRow {
+  /** Stable identity (the name used by the host); `name` is what is shown and can be renamed. */
+  id: string;
   name: string;
+  /** Made in the panel from selected channels, so it can be removed. */
+  user: boolean;
   total: number;
   found: number;
   /** How many of the matched channels are switched on. */
   on: number;
   missing: string[];
+  /** The members as settings.json would list them: matched channel names (or 1-based numbers when unnamed), then the ones that matched nothing. */
+  members: (string | number)[];
   /** Positions of the matched channels, for filtering the list. */
   positions: number[];
   /** Of the matched channels: all, some or none are switched on. */
@@ -47,7 +63,7 @@ export interface ChannelGroupRow {
 
 export interface ChannelsModel {
   visible: boolean;
-  planes: { index: number; name: string; min: number; max: number }[];
+  planes: { index: number; name: string; min: number; max: number; histogram: number[] }[];
   settings: ChannelSettings[];
   solo: number | null;
   composite: boolean;
@@ -56,6 +72,12 @@ export interface ChannelsModel {
   /** The channel the selector shows (single-channel view), or null. */
   current: number | null;
   groups: ChannelGroupRow[];
+  cells: CellsPanelModel | null;
+  /** The section the host asked to show; `id` changes with every request. `exclusive`: the panel was just opened for it, so the other section starts folded. */
+  focus: { section: 'channels' | 'cells'; id: number; exclusive: boolean } | null;
+  /** A scene viewer (Xenium): the All channels and Groups subsections start folded. */
+  compact: boolean;
+  transcripts: TranscriptsPanelModel | null;
   close: () => void;
   toggleComposite: () => void;
   setSolo: (index: number) => void;
@@ -66,26 +88,41 @@ export interface ChannelsModel {
   deselectAll: (only?: number[]) => void;
   toggleGroup: (name: string) => void;
   soloGroup: (name: string) => void;
+  /** Make a group of the channels that are switched on (`only` limits it to those positions). Returns why not, or null. */
+  groupFromSelected: (only?: number[]) => string | null;
+  renameGroup: (id: string, name: string) => string | null;
+  removeGroup: (id: string) => void;
 }
 export class ChannelsPanel {
   private visible = false;
   private sourcePlanes: ChannelPlane[] | null = null;
   private planeDescriptors: ChannelsModel['planes'] = [];
   private view;
+  private userGroups: ChannelGroupConfig[] = [];
+  private names = new Map<string, string>();
+  private userCounter = 0;
+  private focus: ChannelsModel['focus'] = null;
+  /** Groups made in the panel, for the host to resolve alongside the configured ones (members are 1-based positions). */
+  groupConfigs(): ChannelGroupConfig[] { return this.userGroups; }
+  private shown(id: string): string { return this.names.get(id) ?? id; }
   constructor(private host: ChannelsPanelHost) { this.view = mountView(Channels, this.snapshot(false)); }
   private snapshot(readHost = true): ChannelsModel {
     const planes = readHost ? this.host.getPlanes() : [];
     if (planes !== this.sourcePlanes) {
       this.sourcePlanes = planes;
-      this.planeDescriptors = planes.map(plane => ({ index: plane.index, name: plane.name,
-        ...channelStats(plane, Math.max(1, Math.floor(plane.data.length / 200_000))) }));
+      this.planeDescriptors = planes.map(plane => {
+        const step = Math.max(1, Math.floor(plane.data.length / 200_000));
+        const { min, max } = channelStats(plane, step);
+        return { index: plane.index, name: plane.name, min, max, histogram: channelHistogram(plane, min, max, HISTOGRAM_BINS, step) };
+      });
     }
     const settings = this.host.getSettings();
     const groupSolo = readHost ? this.host.getGroupSolo?.() ?? null : null;
     const groups: ChannelGroupRow[] = (readHost ? this.host.getGroups?.() ?? [] : []).map(group => {
       const on = group.positions.filter(position => settings[position]?.visible).length;
       return {
-        name: group.name, total: group.total, found: group.positions.length, on, missing: group.missing, positions: group.positions,
+        id: group.name, name: this.shown(group.name), user: this.userGroups.some(entry => entry.name === group.name), total: group.total, found: group.positions.length, on, missing: group.missing, positions: group.positions,
+        members: [...group.positions.map(position => planes[position]?.name?.trim() || position + 1), ...group.missing],
         state: on === 0 ? 'none' : on === group.positions.length ? 'all' : 'some',
         soloed: groupSolo === group.name,
       };
@@ -94,7 +131,7 @@ export class ChannelsPanel {
       visible: this.visible,
       // Only small UI descriptors cross the bridge, never reactive pixel buffers.
       planes: this.planeDescriptors,
-      groups, settings, solo: this.host.getSolo(), composite: this.host.isComposite(),
+      groups, focus: this.focus, compact: this.host.compact ?? !!this.host.getCells, cells: readHost ? this.host.getCells?.() ?? null : null, transcripts: readHost ? this.host.getTranscripts?.() ?? null : null, settings, solo: this.host.getSolo(), composite: this.host.isComposite(),
       backend: this.host.getBackend?.() ?? 'cpu', status: this.host.getStatus?.() ?? null,
       current: readHost && !this.host.isComposite() ? this.host.getCurrentChannel?.() ?? null : null, close: () => this.hide(),
       toggleComposite: () => { this.host.setComposite(!this.host.isComposite()); this.render(); },
@@ -133,6 +170,34 @@ export class ChannelsPanel {
         this.host.setGroupSolo?.(this.host.getGroupSolo?.() === name ? null : name);
         this.host.onChange(); this.render();
       },
+      groupFromSelected: only => {
+        const settings = this.host.getSettings();
+        const members = settings.flatMap((setting, position) => setting.visible && (!only || only.includes(position)) ? [position + 1] : []);
+        if (!members.length) return 'Switch on at least one channel first.';
+        const taken = new Set((this.host.getGroups?.() ?? []).map(group => this.shown(group.name)));
+        let number = taken.size + 1;
+        while (taken.has(`Group ${number}`)) number++;
+        const id = `\u0000user-group-${++this.userCounter}`;
+        this.userGroups.push({ name: id, members });
+        this.names.set(id, `Group ${number}`);
+        this.render();
+        return null;
+      },
+      renameGroup: (id, name) => {
+        const clean = name.trim();
+        if (!clean) return 'Name the group.';
+        if (clean === this.shown(id)) return null;
+        if ((this.host.getGroups?.() ?? []).some(group => group.name !== id && this.shown(group.name) === clean)) return `There is already a group called ${clean}.`;
+        this.names.set(id, clean);
+        this.render();
+        return null;
+      },
+      removeGroup: id => {
+        if (this.host.getGroupSolo?.() === id) { this.host.setGroupSolo?.(null); this.host.onChange(); }
+        this.userGroups = this.userGroups.filter(group => group.name !== id);
+        this.names.delete(id);
+        this.render();
+      },
     };
   }
   /** Switch every channel (or just those in `only`) on or off, and drop any solo so the result is what it says. */
@@ -143,6 +208,12 @@ export class ChannelsPanel {
     this.host.onChange(); this.render();
   }
   show(): void { this.visible = true; this.render(); }
+  /** Show the panel at one section: a closed panel opens with only that section unfolded, an open one just unfolds it. */
+  reveal(section: 'channels' | 'cells'): void {
+    this.focus = { section, id: (this.focus?.id ?? 0) + 1, exclusive: !this.visible };
+    this.visible = true;
+    this.render();
+  }
   hide(): void { this.visible = false; this.render(); }
   isVisible(): boolean { return this.visible; }
   toggle(): void { if (this.visible) this.hide(); else this.show(); }

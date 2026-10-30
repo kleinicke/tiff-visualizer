@@ -18,6 +18,8 @@ const path = require('path');
 function selectorExtensions(packageJson) {
 	const found = new Set();
 	for (const editor of packageJson.contributes.customEditors) {
+		// Bundle manifests open their own viewer rather than a registered decoder.
+		if (editor.viewType === 'tiffVisualizer.xeniumViewer') { continue; }
 		for (const selector of editor.selector) {
 			// "*.{tif,tiff,...}" or "*.ext"
 			const match = /\*\.\{([^}]*)\}|\*\.([A-Za-z0-9]+)$/.exec(selector.filenamePattern);

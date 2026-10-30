@@ -109,6 +109,16 @@
             "filenamePattern": "*.{png,jpeg,jpg,bmp,ico,webp,avif}"
           }
         ]
+      },
+      {
+        "viewType": "tiffVisualizer.xeniumViewer",
+        "displayName": "Xenium Viewer",
+        "priority": "default",
+        "selector": [
+          {
+            "filenamePattern": "*.xenium"
+          }
+        ]
       }
     ],
     "commands": [
@@ -230,6 +240,11 @@
       {
         "command": "tiffVisualizer.toggleChannels",
         "title": "Channels",
+        "category": "Scientific Image Visualizer"
+      },
+      {
+        "command": "tiffVisualizer.toggleCells",
+        "title": "Toggle Cells",
         "category": "Scientific Image Visualizer"
       },
       {
@@ -450,6 +465,74 @@
           },
           "description": "Named groups of channels for the Channels panel, for example {\"T Cells\": [\"CD3e\", \"CD8\", \"CD4\"]}. Each value lists channel names (exact, case-insensitive) or 1-based channel numbers. A group can be switched on or off, or soloed, as a unit."
         },
+        "tiffVisualizer.cells.autoOpenPanel": {
+          "type": "string",
+          "enum": ["auto", "always", "never"],
+          "enumDescriptions": [
+            "Open the Channels panel, which ends in the Cells section, for multichannel OME-TIFF images with a micron scale, which is what fluorescence microscopy looks like. Other images never see it.",
+            "Open the Channels panel with its Cells section for every image.",
+            "Never open it by itself. Run Scientific Image Visualizer: Toggle Cells."
+          ],
+          "default": "auto",
+          "description": "When the Channels panel and its Cells section open by themselves. It opens once per file, so closing it is not undone as you step through Z or T."
+        },
+        "tiffVisualizer.cells.cellIdCol": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "examples": [["Object"]],
+          "description": "Other names for the column that identifies the cell in a cell table (.parquet, .csv or .tsv), besides cell_id, for example [\"Object\"] for the intensity tables steinbock writes. Matched without regard to case; cell_id is tried first, then these in order. The ids must match the values painted in the mask image or the cell_id of the cell set the table is added to."
+        },
+        "tiffVisualizer.cells.cellData": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string", "description": "Path of the table, for example segtraq/{sample_name}/{sample_name}.segtraq_cells.parquet." },
+              "parent": { "type": "string", "description": "Name of the one cell set the table belongs to: Xenium cells, or a name from tiffVisualizer.cells.cellBoundaries." }
+            },
+            "required": ["path", "parent"]
+          },
+          "description": "Extra cell tables, as name → {path, parent}, for example {\"xenium_segtraq\": {\"path\": \"segtraq/{sample_name}/{sample_name}.segtraq_cells.parquet\", \"parent\": \"Xenium cells\"}}. Each file is a .parquet, .csv or .tsv table with a cell id column (cell_id, or a name from tiffVisualizer.cells.cellIdCol). It is listed under its parent cell set only, and its columns are merged into that set by cell id when you click Load. The parent is Xenium cells (the bundle's own cells) or a name from tiffVisualizer.cells.cellBoundaries. {sample_name} is the name of the folder that holds experiment.xenium in a Xenium bundle, and the image's file name without its extension (a.ome.tif gives a) in the image viewer. Relative paths start at the workspace folder. Used by the Xenium viewer and by the Cells section of the image viewer. Replaces tiffVisualizer.cells.cellsParquet, which is still read."
+        },
+        "tiffVisualizer.transcripts.groups": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "oneOf": [
+              { "type": "array", "items": { "type": "string" } },
+              {
+                "type": "object",
+                "properties": {
+                  "genes": { "type": "array", "items": { "type": "string" } },
+                  "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+                },
+                "required": ["genes"]
+              }
+            ]
+          },
+          "description": "Gene groups for the Transcripts section of Xenium bundles, as name → gene list, for example {\"Epithelial\": [\"EPCAM\", \"KRT8\"]}, or name → {genes, color} to choose the group colour. Groups are offered in the Transcripts section's Add group list; none is added until you pick it. Groups can also be made in the panel, from a pasted list of gene names."
+        },
+        "tiffVisualizer.cells.cellBoundaries": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": { "type": "string" },
+          "description": "Extra cell segmentations, as name → path, for example {\"sam2\": \"sam2/{sample_name}/cell_boundaries.parquet\", \"cellpose\": \"masks/{sample_name}_mask.tif\"}. Each file is a Xenium-style cell_boundaries.parquet (cell_id, vertex_x, vertex_y in microns), a .csv or .tsv of the same columns, or a .tif label mask (unsigned integers, objects numbered from 1). {sample_name} is the name of the folder that holds experiment.xenium in a Xenium bundle, and the image's file name without its extension (a.ome.tif gives a) in the image viewer. Relative paths start at the workspace folder. Used by the Xenium viewer and by the Cells section of the image viewer. Replaces tiffVisualizer.cells.cellBoundariesParquet, which is still read. Segmentations are listed in the Cells section and loaded when you click Load."
+        },
+        "tiffVisualizer.cells.nucleusBoundaries": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "path": { "type": "string", "description": "Path of the nucleus boundaries file, for example sam2/{sample_name}/nucleus_boundaries.parquet." },
+              "parent": { "type": "string", "description": "Name of the one cell set the nuclei belong to: Xenium cells, or a name from tiffVisualizer.cells.cellBoundaries." }
+            },
+            "required": ["path", "parent"]
+          },
+          "description": "Extra nucleus outlines, as name → {path, parent}, for example {\"sam2_nuclei\": {\"path\": \"sam2/{sample_name}/nucleus_boundaries.parquet\", \"parent\": \"sam2\"}}. Each file is a Xenium-style nucleus_boundaries.parquet (cell_id, vertex_x, vertex_y in microns) whose cell ids match its parent. It is listed under its parent cell set only and loaded when you click Load; a cell set shows one nucleus file at a time, so loading one replaces the previous. {sample_name} is the name of the folder that holds experiment.xenium in a Xenium bundle, and the image's file name without its extension (a.ome.tif gives a) in the image viewer. Relative paths start at the workspace folder. Replaces tiffVisualizer.cells.nucleusBoundariesParquet, which is still read."
+        },
         "tiffVisualizer.gpuAcceleration": {
           "type": "boolean",
           "default": true,
@@ -469,6 +552,8 @@
     "build:wasm": "cd wasm/tiff-decoder && RUSTFLAGS=\"-C target-feature=+simd128\" wasm-pack build --target web --release && cd ../.. && mkdir -p media/wasm && cp wasm/tiff-decoder/pkg/tiff_wasm.js media/wasm/tiff-wasm.js && cp wasm/tiff-decoder/pkg/tiff_wasm_bg.wasm media/wasm/tiff-wasm.wasm && node -e \"const fs=require('fs');const f='media/wasm/tiff-wasm.js';fs.writeFileSync(f,fs.readFileSync(f,'utf8').replace(/tiff_wasm_bg\\.wasm/g,'wasm/tiff-wasm.wasm'))\" && node scripts/strip-wasm-names.mjs media/wasm/tiff-wasm.wasm",
     "build:wasm:codecs": "cd wasm/tiff-decoder && RUSTFLAGS=\"-C target-feature=+simd128\" wasm-pack build --target web --release --out-dir pkg-codecs --out-name codec_wasm --features heavy-codecs && cd ../.. && mkdir -p media/wasm && cp wasm/tiff-decoder/pkg-codecs/codec_wasm.js media/wasm/codec-wasm.js && cp wasm/tiff-decoder/pkg-codecs/codec_wasm_bg.wasm media/wasm/codec-wasm.wasm && node -e \"const fs=require('fs');const f='media/wasm/codec-wasm.js';fs.writeFileSync(f,fs.readFileSync(f,'utf8').replace(/codec_wasm_bg\\.wasm/g,'wasm/codec-wasm.wasm'))\" && node scripts/strip-wasm-names.mjs media/wasm/codec-wasm.wasm",
     "build:wasm:jxl": "cd wasm/jxl-decoder && RUSTFLAGS=\"-C target-feature=+simd128\" wasm-pack build --target web --release && cd ../.. && mkdir -p media/wasm && cp wasm/jxl-decoder/pkg/jxl_wasm.js media/wasm/jxl-wasm.js && cp wasm/jxl-decoder/pkg/jxl_wasm_bg.wasm media/wasm/jxl-wasm.wasm && node -e \"const fs=require('fs');const f='media/wasm/jxl-wasm.js';fs.writeFileSync(f,fs.readFileSync(f,'utf8').replace(/jxl_wasm_bg\\.wasm/g,'wasm/jxl-wasm.wasm'))\" && node scripts/strip-wasm-names.mjs media/wasm/jxl-wasm.wasm",
+    "build:wasm:transcripts": "RUSTFLAGS=\"-C target-feature=+simd128\" CC_wasm32_unknown_unknown=\"${CC_wasm32_unknown_unknown:-$PWD/scripts/zig-cc-wasm32.sh}\" AR_wasm32_unknown_unknown=\"${AR_wasm32_unknown_unknown:-ar}\" cargo build --release --target wasm32-unknown-unknown -p transcripts-wasm --no-default-features --features c-zstd && mkdir -p media/wasm && cp target/wasm32-unknown-unknown/release/transcripts_wasm.wasm media/wasm/transcripts-wasm.wasm && node scripts/strip-wasm-names.mjs media/wasm/transcripts-wasm.wasm",
+    "build:wasm:transcripts:portable": "RUSTFLAGS=\"-C target-feature=+simd128\" cargo build --release --target wasm32-unknown-unknown -p transcripts-wasm && mkdir -p media/wasm && cp target/wasm32-unknown-unknown/release/transcripts_wasm.wasm media/wasm/transcripts-wasm.wasm && node scripts/strip-wasm-names.mjs media/wasm/transcripts-wasm.wasm",
     "compile": "npm run clean && npm run build:wasm && npm run build:wasm:codecs && npm run build:wasm:jxl && node ./esbuild.js",
     "compile:quick": "npm run clean && node ./esbuild.js",
     "watch": "npm run clean && node ./esbuild.js --watch",
@@ -482,15 +567,15 @@
     "docs:check": "node scripts/generate-command-docs.js --check",
     "pretest": "npm run compile:quick && npm run lint && npm run docs:check",
     "lint:rust": "cargo clippy --workspace --exclude jpegxr-wasm --all-targets --all-features --no-deps --locked -- -D warnings",
-    "lint:rust:wasm": "cargo clippy --workspace --exclude jpegxr-wasm --target wasm32-unknown-unknown --all-targets --all-features --no-deps --locked -- -D warnings",
+    "lint:rust:wasm": "cargo clippy --workspace --exclude jpegxr-wasm --target wasm32-unknown-unknown --exclude transcripts-wasm --all-targets --all-features --no-deps --locked -- -D warnings",
     "format:rust": "cargo fmt -p scientific-image-decoders -p tiff-wasm -p jxl-wasm",
     "format:rust:check": "npm run format:rust -- --check",
-    "lint": "eslint src media/imagePreview.ts media/decode-worker.ts media/png-decode-worker.ts media/layered-decode-worker.ts media/layered-preview-fallback.ts media/layer-document-writer-entry.ts media/imagej-roi-entry.ts media/layer-compositor-worker.ts media/comparisonPanel.ts media/modules web ui --ext ts,js",
+    "lint": "eslint src media/imagePreview.ts media/xenium-viewer.ts media/xenium-tile-worker.ts media/xenium-cells-worker.ts media/decode-worker.ts media/png-decode-worker.ts media/layered-decode-worker.ts media/layered-preview-fallback.ts media/layer-document-writer-entry.ts media/imagej-roi-entry.ts media/layer-compositor-worker.ts media/comparisonPanel.ts media/modules web ui --ext ts,js",
     "typecheck": "npm run typecheck:src && npm run typecheck:media && npm run typecheck:web && npm run typecheck:ui",
     "typecheck:src": "tsc -p tsconfig.json --noEmit",
     "typecheck:media": "tsc -p media/tsconfig.json --noEmit",
     "typecheck:web": "tsc -p web/tsconfig.json --noEmit",
-    "test": "npm run test:extension-web && npm run test:sgi && npm run test:format-registry && npm run test:format-sniffer && npm run test:geotiff && npm run test:main-thread-wasm-wiring && npm run test:tiff-parallel-routing && npm run test:decode-worker-return-source && npm run test:format-defaults && npm run test:session-settings && npm run test:source-push && npm run test:pushed-source && npm run test:decode-worker-boot-race && npm run test:web-host && npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:layer-compositor-bands && npm run test:layers-panel && npm run test:control-behavior && npm run test:touch-pinch && npm run test:scroll-zoom && npm run test:wasm && npm run test:strip-parallel && npm run test:tiff-detail-workers && npm run test:strip-pool-planes && npm run test:tiff-stream-decode && npm run test:tiff-result-planes && npm run test:exr-zip-pool && npm run test:hdr-pool && npm run test:psd-composite-pool && npm run test:tiff-preview-pool && npm run test:tiff-jpeg-tiled && npm run test:tiff-layout && npm run test:rust-netpbm && npm run test:rust-npy && npm run test:fast-raw && npm run test:tga-fast && npm run test:bootstrap-image && npm run test:wasm-buffer-reuse && npm run test:rust-scientific && npm run test:rust-stats && npm run test:formats && npm run test:layered-formats && npm run test:png-rgba8 && npm run test:scientific-formats && npm run test:scientific-deferred-render && npm run test:microscopy-matrix && npm run test:czi-ranged && npm run test:ranged-microscopy && npm run test:dicom-dataset && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:tiff-pages && npm run test:region-decode && npm run test:tiff-preview && npm run test:viewport-tiles && npm run test:pyramid-scene && npm run test:pyramid-picker && npm run test:remote-cog-range && npm run test:remote-tiff-source && npm run test:request-scheduler && npm run test:gdal-metadata && npm run test:nan-color && npm run test:image-renderer-channels && npm run test:active-image && npm run test:viewer-boundaries && npm run test:collection-switch && npm run test:debayer && npm run test:measurement && npm run test:rust-measure && npm run test:channels && npm run test:channel-fixtures",
+    "test": "npm run test:extension-web && npm run test:sgi && npm run test:format-registry && npm run test:format-sniffer && npm run test:geotiff && npm run test:main-thread-wasm-wiring && npm run test:tiff-parallel-routing && npm run test:decode-worker-return-source && npm run test:format-defaults && npm run test:session-settings && npm run test:source-push && npm run test:pushed-source && npm run test:decode-worker-boot-race && npm run test:web-host && npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:layer-compositor-bands && npm run test:layers-panel && npm run test:control-behavior && npm run test:touch-pinch && npm run test:scroll-zoom && npm run test:wasm && npm run test:strip-parallel && npm run test:tiff-detail-workers && npm run test:strip-pool-planes && npm run test:tiff-stream-decode && npm run test:tiff-result-planes && npm run test:exr-zip-pool && npm run test:hdr-pool && npm run test:psd-composite-pool && npm run test:tiff-preview-pool && npm run test:tiff-jpeg-tiled && npm run test:tiff-layout && npm run test:rust-netpbm && npm run test:rust-npy && npm run test:fast-raw && npm run test:tga-fast && npm run test:bootstrap-image && npm run test:wasm-buffer-reuse && npm run test:rust-scientific && npm run test:rust-stats && npm run test:formats && npm run test:layered-formats && npm run test:png-rgba8 && npm run test:scientific-formats && npm run test:scientific-deferred-render && npm run test:microscopy-matrix && npm run test:czi-ranged && npm run test:ranged-microscopy && npm run test:dicom-dataset && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:tiff-pages && npm run test:region-decode && npm run test:tiff-preview && npm run test:viewport-tiles && npm run test:pyramid-scene && npm run test:pyramid-picker && npm run test:remote-cog-range && npm run test:remote-tiff-source && npm run test:request-scheduler && npm run test:gdal-metadata && npm run test:nan-color && npm run test:image-renderer-channels && npm run test:active-image && npm run test:viewer-boundaries && npm run test:collection-switch && npm run test:debayer && npm run test:measurement && npm run test:rust-measure && npm run test:channels && npm run test:channel-fixtures && npm run test:xenium-scene && npm run test:xenium-cells && npm run test:cells-relevance && npm run test:cells-tables && npm run test:xenium-transcripts",
     "test:unit": "npm run test:compositor && npm run test:layer-compositor-bands && npm run test:layers-panel && npm run test:control-behavior",
     "test:integration": "npm run test:playwright",
     "test:format-defaults": "node test/format-defaults-test.js",
@@ -513,6 +598,11 @@
     "test:measurement": "node test/measurement-test.js",
     "test:rust-measure": "node test/rust-measure-conformance-test.js",
     "test:channels": "node test/channel-composite-test.js",
+    "test:xenium-scene": "node test/xenium-scene-test.js",
+    "test:xenium-cells": "node test/xenium-cells-test.js",
+    "test:cells-relevance": "node test/cells-relevance-test.js",
+    "test:cells-tables": "node test/cells-tables-test.js",
+    "test:xenium-transcripts": "node test/xenium-transcripts-test.js",
     "test:channel-fixtures": "node test/channel-fixtures-test.js",
     "test:compositor": "node test/layer-compositor-test.js",
     "test:layers-panel": "node test/layers-panel-tree-test.js",
@@ -611,6 +701,8 @@
     "chai": "^4.3.0",
     "esbuild": "^0.25.5",
     "eslint": "^8.57.0",
+    "fzstd": "^0.1.1",
+    "hyparquet": "^1.31.5",
     "mocha": "^10.4.0",
     "rimraf": "^6.0.1",
     "svelte": "^5.57.0",
