@@ -29,6 +29,8 @@ export class ZoomController {
 	/** With `scrollToZoom`: how far dragging has moved the image on an axis it has no scroll range on. */
 	private panOffset = { x: 0, y: 0 };
 	private endPan: (() => void) | null = null;
+	/** Fit mode has enlarged a small image to fill the view, so a resize has to size it again. */
+	private fitUpscaled = false;
 	private touchPinch: { distance: number, scale: number, x: number, y: number } | null = null;
 
 	private viewport() {
@@ -121,6 +123,7 @@ export class ZoomController {
 			this.scale = 'fit';
 			this.imageElement.classList.add('scale-to-fit');
 			this.imageElement.classList.remove('pixelated');
+			this.fitUpscaled = false;
 			// Clear inline sizing and transforms when returning to fit
 			this.imageElement.style.transform = '';
 			this.imageElement.style.transformOrigin = '';
@@ -130,13 +133,17 @@ export class ZoomController {
 			// A pyramid scene is a normal element rather than a replaced img/canvas,
 			// so object-fit cannot size it. Give it the same fitted dimensions here;
 			// numeric zooms below continue to operate in full-resolution scene space.
-			if (this.imageElement.classList.contains('pyramid-scene') || this.container.classList.contains('web-app')) {
-				const { width, height } = this._getNaturalSize(this.imageElement);
-				const fit = Math.min(
-					this.container.classList.contains('web-app') ? Infinity : 1,
-					Math.max(1, viewport.width - 20) / width,
-					Math.max(1, viewport.height - 20) / height,
-				);
+			// The same applies to an image smaller than the view: CSS never enlarges it, so a
+			// small image would sit tiny in the middle of the canvas. Fit enlarges it to fill the view.
+			const { width, height } = this._getNaturalSize(this.imageElement);
+			const toView = width > 0 && height > 0
+				? Math.min(Math.max(1, viewport.width - 20) / width, Math.max(1, viewport.height - 20) / height)
+				: 1;
+			// With `fitUpscale` off, only the web app enlarges (as before); everything else is capped at its natural size.
+			const fit = this.fitUpscale || this.container.classList.contains('web-app') ? toView : Math.min(1, toView);
+			this.fitUpscaled = this.fitUpscale && fit > 1;
+			if (this.fitUpscaled && fit >= constants.PIXELATION_THRESHOLD) { this.imageElement.classList.add('pixelated'); }
+			if (this.fitUpscaled || this.imageElement.classList.contains('pyramid-scene') || this.container.classList.contains('web-app')) {
 				this.imageElement.style.width = `${width * fit}px`;
 				this.imageElement.style.height = `${height * fit}px`;
 				this.imageElement.style.margin = 'auto';
@@ -290,6 +297,11 @@ export class ZoomController {
 	/**
 	 * Reset zoom to fit
 	 */
+	/** Size a fitted, enlarged image again after the view changed. */
+	refit() {
+		if (this.scale === 'fit' && this.fitUpscaled) { this.updateScale('fit'); }
+	}
+
 	resetZoom() {
 		this.updateScale('fit');
 	}
@@ -332,6 +344,9 @@ export class ZoomController {
 			this.updateScale((this.scale as number) * (1 - delta * this.settingsManager.constants.SCALE_PINCH_FACTOR));
 		}
 	}
+
+	/** `tiffVisualizer.fitUpscale` (default on): Fit enlarges an image smaller than the view. */
+	get fitUpscale(): boolean { return this.settingsManager.settings.fitUpscale !== false; }
 
 	/** `tiffVisualizer.scrollToZoom`: the wheel zooms about the cursor and dragging the image pans it. */
 	get scrollToZoom(): boolean { return this.settingsManager.settings.scrollToZoom === true; }

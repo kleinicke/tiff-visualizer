@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Add the `tiffVisualizer.scrollToZoom` setting (off by default): scroll zooms about the cursor without a modifier key, and dragging the image pans it
+- Fit now enlarges images smaller than the window to fill it (with hard pixel edges above 3x), and re-fits them when the window is resized. It used to leave them at their natural size, which made small images tiny on a large canvas. `tiffVisualizer.fitUpscale` (on by default) turns this off to restore the old behaviour
 - Add SGI RGB image support (`.rgb`, `.rgba`, `.sgi`, `.bw`), including 8/16-bit uncompressed and RLE images.
 - Improve NumPy npy and npz dataset loading and navigation
 - rearrange right click menu

@@ -895,7 +895,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	// coordinates so it travels with it, but a pan can also expose ground the
 	// patch does not cover, which needs a new rectangle.
 	window.addEventListener('resize', () => {
-		if (container.classList.contains('web-app') && zoomController.scale === 'fit') { zoomController.updateScale('fit'); }
+		if (container.classList.contains('web-app') && zoomController.scale === 'fit') { zoomController.updateScale('fit'); } else { zoomController.refit(); }
 		invalidatePyramidViewport(); scheduleLevelRefinement();
 	});
 	window.addEventListener('scroll', () => {
@@ -3810,8 +3810,10 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				// Handle real-time settings updates
 				const oldResourceUri = settingsManager.settings.resourceUri;
 				const updateApplyStart = performance.now();
+				const fitUpscaleBefore = zoomController.fitUpscale;
 				const changes = settingsManager.updateSettings(message.settings);
 				zoomController.applyInteractionSettings();
+				if (zoomController.fitUpscale !== fitUpscaleBefore && zoomController.scale === 'fit') { zoomController.updateScale('fit'); }
 				if (message.settings && 'channelDefaults' in message.settings) {
 					applyChannelGroups(message.settings.channelDefaults?.groups);
 				}
