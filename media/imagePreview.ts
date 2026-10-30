@@ -4967,55 +4967,11 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			zoomController.handleWheelZoom(e, keyState.ctrlPressed, keyState.altPressed);
 		}, { passive: false });
 
-		// Mouse click handling for zoom
+		// Single clicks leave the view unchanged; dragging pans in scroll-to-zoom mode.
 		container.addEventListener('mousedown', (e) => {
-			if (!imageElement || !hasLoadedImage) {
-				return;
-			}
-
+			if (!imageElement || !hasLoadedImage) { return; }
 			if (e.target === imageElement || e.target === container) {
-				if (zoomController.beginPan(e, moved => { if (moved) { mouseHandler.consumeClick = true; } })) { return; }
-			}
-
-			if (e.button !== 0 || e.target !== imageElement) {
-				return;
-			}
-
-			mouseHandler.consumeClick = !mouseHandler.isActive;
-		});
-
-		container.addEventListener('click', (e) => {
-			if (!imageElement || !hasLoadedImage) {
-				return;
-			}
-
-			// The website toolbar, status bar, and popovers live inside this body,
-			// too. Only a click on the displayed pixels is an image zoom gesture.
-			if (e.button !== 0 || e.target !== imageElement) {
-				return;
-			}
-
-			// In layer move mode, a click on the image moves the layer — don't zoom.
-			if (layerManager.active && layersPanel.movingLayerId) {
-				return;
-			}
-
-			if (mouseHandler.consumeClick) {
-				mouseHandler.consumeClick = false;
-				return;
-			}
-			if (zoomController.scrollToZoom && e.detail > 1) { return; }
-
-			// left click zoom
-			if (zoomController.scale === 'fit') {
-				zoomController.firstZoom();
-			}
-
-			const keyState = mouseHandler.getKeyboardState();
-			if (!(settingsManager.isMac ? keyState.altPressed : keyState.ctrlPressed)) { // zoom in
-				zoomController.zoomIn();
-			} else {
-				zoomController.zoomOut();
+				zoomController.beginPan(e, () => {});
 			}
 		});
 

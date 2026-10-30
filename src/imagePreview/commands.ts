@@ -1620,6 +1620,15 @@ export function registerImagePreviewCommands(
 		}
 	}));
 
+	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleScrollToZoom', async () => {
+		const config = vscode.workspace.getConfiguration('tiffVisualizer');
+		const inspected = config.inspect<boolean>('scrollToZoom');
+		// Respect an existing workspace preference; otherwise save the user preference.
+		const target = inspected?.workspaceValue !== undefined
+			? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+		await config.update('scrollToZoom', !config.get<boolean>('scrollToZoom', false), target);
+	}));
+
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleHistogram', () => {
 		logCommand('toggleHistogram', 'start');
 		try {

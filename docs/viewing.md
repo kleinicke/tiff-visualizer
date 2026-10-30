@@ -32,10 +32,15 @@ Hold `Option` (macOS) or `Ctrl` and scroll to zoom, scroll to pan, pinch
 image again.
 
 Set `tiffVisualizer.scrollToZoom` to `true` to zoom with the wheel or trackpad
-scroll alone, about the cursor, and to pan by dragging the image. A click that
-does not drag still zooms in; double-click fits the image. Turning the setting
-off clears any drag displacement while keeping the current zoom level. Drag
+scroll alone, about the cursor, and to pan by dragging the image. Single clicks
+do not zoom in either mode; double-click fits the image when scroll-to-zoom is
+enabled. Turning the setting off clears any drag displacement while keeping the current zoom level. Drag
 position is preserved with the viewer's zoom state when its tab is restored.
+
+Use **Scientific Image Visualizer: Toggle Scroll to Zoom** in the Command Palette
+for quick switching, or assign it a keyboard shortcut. The command updates an
+existing workspace setting if present; otherwise it saves your user preference.
+Open viewers apply the change immediately.
 
 **Zoom In**, **Zoom Out** and
 **Reset Zoom** are also commands, so they can be bound to your own keys.

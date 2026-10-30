@@ -80,7 +80,7 @@ test('disabling scroll zoom clears translation without changing magnification', 
   expect((await rect(page)).x).toBeCloseTo(after.x, 0);
 });
 
-test('disabled mode retains scrolling, modifier zoom and legacy double click', async ({ page }) => {
+test('disabled mode retains scrolling and modifier zoom without click zoom', async ({ page }) => {
   await open(page, false); await scale(page, 4);
   const before = await rect(page);
   await page.mouse.move(600, 400); await page.mouse.wheel(0, 150);
@@ -124,5 +124,19 @@ for (const enabled of [false, true]) {
     await drag(page, 600, 350, 48, 32);
     await expect.poll(async () => Number(await row.getByTitle('X offset', { exact: true }).inputValue())).toBeGreaterThan(offset);
     expect((await rect(page)).x).toBeCloseTo(before.x, 0);
+  });
+}
+
+for (const enabled of [false, true]) {
+  test(`single clicks never zoom (${enabled})`, async ({ page }) => {
+    await open(page, enabled); await scale(page, 1);
+    // Include the old activation message to ensure the obsolete handler is gone.
+    await page.evaluate(() => window.postMessage({ type: 'setActive', value: true }, '*'));
+    const before = await rect(page);
+    await page.mouse.click(600, 350); await settle(page);
+    expect(await rect(page)).toEqual(before);
+    await page.keyboard.down('Alt');
+    await page.mouse.click(600, 350); await page.keyboard.up('Alt'); await settle(page);
+    expect(await rect(page)).toEqual(before);
   });
 }

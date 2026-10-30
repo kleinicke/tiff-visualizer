@@ -208,6 +208,11 @@
         "category": "Scientific Image Visualizer"
       },
       {
+        "command": "tiffVisualizer.toggleScrollToZoom",
+        "title": "Toggle Scroll to Zoom",
+        "category": "Scientific Image Visualizer"
+      },
+      {
         "command": "tiffVisualizer.toggleHistogram",
         "title": "Toggle Histogram",
         "category": "Scientific Image Visualizer"
@@ -403,7 +408,7 @@
         "tiffVisualizer.scrollToZoom": {
           "type": "boolean",
           "default": false,
-          "description": "Zoom with the mouse wheel or trackpad scroll about the cursor without holding a modifier key, and pan by dragging the image. A click without dragging still zooms in. Off by default: the wheel scrolls the image and Option (macOS) or Ctrl zooms."
+          "description": "Zoom with the mouse wheel or trackpad scroll about the cursor without holding a modifier key, and pan by dragging the image. Single clicks do not zoom; double-click fits the image. Off by default: the wheel scrolls the image and Option (macOS) or Ctrl zooms."
         },
         "tiffVisualizer.channels.autoComposite": {
           "type": "boolean",
