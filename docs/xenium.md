@@ -89,7 +89,7 @@ To list files for every sample without typing, name them in `settings.json`. `{s
 
 Each table or nucleus file names its one `parent`: `Xenium cells` (the bundle's own cells) or a name from `cellBoundaries`. It is listed under that cell set only, and an entry whose parent does not exist is not shown. The bundle's own `cells.parquet` is always listed as the first table of Xenium cells.
 
-Boundaries files are listed below the cell sets and load when you click **Load**. Table files are listed in their parent's Tables list and load into that set when you click **Load** there. A file that does not exist is shown as not found. Settings are read when the bundle opens. Files outside the workspace folders are read by the extension host and sent to the page, which is slower for large files.
+Boundaries files are listed below the cell sets and load automatically. Table files are listed in their parent's Tables list and load into that set automatically. A file that fails to load shows a **Retry** button, and one that does not exist is shown as not found. Settings are read when the bundle opens. Files outside the workspace folders are read by the extension host and sent to the page, which is slower for large files.
 
 ### Whole-slide performance
 
@@ -139,7 +139,7 @@ The Cells section is not limited to Xenium bundles. In the image viewer the Chan
 run **Scientific Image Visualizer: Toggle Cells** from the command palette (it appends the
 section and unfolds it if folded; running it again removes the section), or let `tiffVisualizer.cells.autoOpenPanel` add it
 for images that look segmented. Fold it away with the arrow, as in the Xenium viewer. Add a Xenium-style `cell_boundaries.parquet`
-(`cell_id`, `vertex_x`, `vertex_y` in microns) by path or with Browse, then Load it.
+(`cell_id`, `vertex_x`, `vertex_y` in microns) by path or with Browse.
 Outlines, colouring by a table column and click selection work as in the Xenium viewer.
 
 Other segmentation outputs can be added the same way:
@@ -161,7 +161,7 @@ with an `Object` column, so use:
 "tiffVisualizer.cells.cellIdCol": ["Object"]
 ```
 
-The same three settings work for ordinary images, where `{sample_name}` is the image's file name without its extension (`a.ome.tif` gives `a`) and relative paths start at the workspace folder. Files named there are listed in the Cells section, ready to Load, the first time the Channels panel is drawn for a file:
+The same three settings work for ordinary images, where `{sample_name}` is the image's file name without its extension (`a.ome.tif` gives `a`) and relative paths start at the workspace folder. Files named there are listed in the Cells section and loaded the first time the Channels panel is drawn for a file:
 
 ```json
 "tiffVisualizer.cells.cellBoundaries": {

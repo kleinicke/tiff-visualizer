@@ -3,6 +3,12 @@
   import CellSet from './CellSet.svelte';
   let { cells, open = $bindable(true) }: { cells: CellsPanelModel; open?: boolean } = $props();
   let text = $state('');
+  const requested = new Set<string>();
+  $effect(() => {
+    for (const row of cells.pending) {
+      if (row.state === 'available' && !requested.has(row.id)) { requested.add(row.id); cells.loadSource(row.id); }
+    }
+  });
   function add(event: Event) {
     event.preventDefault();
     if (!text.trim()) return;
@@ -26,8 +32,7 @@
           <span class="cells-source-kind">cells</span>
           <span class="cells-source-name plain">{row.name}</span>
           <span class="cells-source-detail">{row.detail}</span>
-          {#if row.state === 'available'}<button class="measure-chip" title="Load this segmentation" onclick={() => cells.loadSource(row.id)}>Load</button>
-          {:else if row.state === 'error'}<button class="measure-chip" title="Try again" onclick={() => cells.loadSource(row.id)}>Retry</button>{/if}
+          {#if row.state === 'error'}<button class="measure-chip" title="Try again" onclick={() => cells.loadSource(row.id)}>Retry</button>{/if}
           {#if row.origin === 'added'}<button class="cells-source-remove" title="Remove from the list" aria-label="Remove {row.name}" onclick={() => cells.removeSource(row.id)}>×</button>{/if}
         </div>
       {/each}
