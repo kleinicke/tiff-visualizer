@@ -157,13 +157,6 @@ export class MouseHandler {
 
 
 	/**
-	 * Set active state
-	 */
-	setActive(value: boolean) {
-		if (!value) { this._handleBlur(); }
-	}
-
-	/**
 	 * Add mouse listeners to an element
 	 */
 	addMouseListeners(element: HTMLElement) {

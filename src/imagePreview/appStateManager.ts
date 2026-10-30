@@ -66,7 +66,6 @@ export class AppStateManager {
 	};
 
 	private _imageStats: ImageStats | undefined;
-	private _comparisonBaseUri: vscode.Uri | undefined;
 	private _statusBarState: StatusBarState = {
 		activePreview: undefined,
 		visibleEntries: new Set()
@@ -94,10 +93,6 @@ export class AppStateManager {
 
 	public get imageStats(): Readonly<ImageStats> | undefined {
 		return this._imageStats;
-	}
-
-	public get comparisonBaseUri(): vscode.Uri | undefined {
-		return this._comparisonBaseUri;
 	}
 
 	public get activePreview(): any {
@@ -289,12 +284,6 @@ export class AppStateManager {
 			this._imageStats = { min, max };
 			this._onDidChangeStats.fire(this._imageStats);
 		}
-	}
-
-	// Comparison Management
-	public setComparisonBase(uri: vscode.Uri | undefined): void {
-		this._comparisonBaseUri = uri;
-		vscode.commands.executeCommand('setContext', 'tiffVisualizer.hasComparisonImage', !!uri);
 	}
 
 	// Preview Management

@@ -2831,11 +2831,9 @@ control.
      and its `media/geotiff.min.js` copy step in `esbuild.js`, and the
      `geotiff` vendor-asset URL in `imagePreview.ts` and `web/vendor-assets.js`.
 
-  **Already dead, removable now regardless:** `decodeTiffGeotiff` in
-  `media/decode-worker.ts`. Its `WorkerGeoTIFF` global is declared but never
-  assigned, nothing calls the function, and esbuild already strips it from
-  `decodeWorker.bundle.js` — so it is source-level clutter that reads like a
-  live path and is not one.
+  **Completed:** removed the unused worker-only `decodeTiffGeotiff` helper
+  and its unassigned `WorkerGeoTIFF` global. The live webview fallback above
+  remains in place.
 
   Still folded into item 12 phase 1, which retires the `parse-exr`, `upng` and
   `pako` fallbacks on the same criterion — each of those needs its own version

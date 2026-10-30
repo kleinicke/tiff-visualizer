@@ -3753,10 +3753,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				finishLayerRestore(message.map || {});
 				break;
 
-			case 'setActive':
-				mouseHandler.setActive(message.value);
-				break;
-
 			case 'zoomIn':
 				zoomController.zoomIn();
 				break;
@@ -4068,15 +4064,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				}
 				break;
 
-			case 'getZoomState':
-				// Send current zoom state back to extension
-				const zoomState = zoomController.getCurrentState();
-				vscode.postMessage({
-					type: 'zoomStateResponse',
-					state: zoomState
-				});
-				break;
-
 			case 'getComparisonState':
 				// Send current comparison state back to extension
 				const comparisonState = {
@@ -4087,13 +4074,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 					type: 'comparisonStateResponse',
 					state: comparisonState
 				});
-				break;
-
-			case 'restoreZoomState':
-				// Restore zoom state after image change
-				if (message.state) {
-					zoomController.restoreState(message.state);
-				}
 				break;
 
 			case 'restoreComparisonState':
@@ -6208,30 +6188,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			loading,
 		});
 	}
-	/**
-	 * Keyboard shortcuts are assigned by SLIDER POSITION, not by axis name.
-	 *
-	 * They used to be chosen by content — arrows drove Z if a Z axis existed,
-	 * brackets drove C — which meant the same key moved a different axis from
-	 * one series to the next, and an axis with no rule (a LIF series selector,
-	 * for instance) got no shortcut at all. Binding to position instead makes
-	 * the mapping stable and visible: the hint sits at the end of its own row,
-	 * so what a key does is always readable off the slider it belongs to.
-	 *
-	 * Sliders past the fourth are mouse-only; there are no obvious further key
-	 * pairs, and inventing obscure ones would be worse than leaving them out.
-	 */
-
-
-	/** Step a CZI plane axis, wrapping like DICOM dataset navigation does. */
-	function navigatePlaneAxis(axis: { name: string, size: number, value: number } | undefined, delta: number) {
-		if (!axis || axis.size <= 1) { return; }
-		const current = Number(planeSelection.indices[axis.name] ?? axis.value) || 0;
-		const next = (current + delta + axis.size) % axis.size;
-		planeSelection.indices = { ...planeSelection.indices, [axis.name]: next };
-		axis.value = next;
-		requestPlaneReload();
-	}
 
 	/**
 	 * Request the plane in `planeSelection`, coalescing while one is in flight.
@@ -7680,14 +7636,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			sourceSize: { w: sourceWidth, h: sourceHeight },
 			targetSize: { w: targetWidth, h: targetHeight }
 		});
-	}
-
-	/**
-	 * Check if a position has been copied (local state only - for context menu)
-	 * Note: Cross-webview paste uses extension-stored state
-	 */
-	function hasPositionCopied() {
-		return copiedPositionState !== null;
 	}
 
 	/**
