@@ -160,3 +160,42 @@ for (const enabled of [false, true]) for (const initial of ['fit', 0.5, 4] as co
     expect(pasted.width).toBeCloseTo(copied.width, 0);
   });
 }
+
+for (const enabled of [false, true]) {
+  for (const cursor of [{ x: 250, y: 170 }, { x: 850, y: 450 }, { x: 640, y: 350 }]) {
+    test(`zoom crosses scroll boundaries smoothly (${enabled}, ${cursor.x}, ${cursor.y})`, async ({ page }) => {
+      await open(page, enabled); await scale(page, 3);
+      const anchor = enabled ? cursor : await page.evaluate(() => {
+        const style = getComputedStyle(document.body);
+        return {
+          x: (document.documentElement.clientWidth + parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)) / 2,
+          y: (document.documentElement.clientHeight + parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)) / 2,
+        };
+      });
+      await page.mouse.move(cursor.x, cursor.y);
+      if (!enabled) { await page.keyboard.down('Control'); }
+      const steps = enabled ? 24 : 8;
+      for (const delta of [...Array(steps).fill(30), ...Array(steps).fill(-30)]) {
+        const before = await rect(page);
+        const u = (anchor.x - before.x) / before.width, v = (anchor.y - before.y) / before.height;
+        await page.mouse.wheel(0, delta);
+        await expect.poll(async () => (await rect(page)).width).not.toBe(before.width);
+        // Browser scroll clamping may settle after the wheel handler returns.
+        await settle(page);
+        const after = await rect(page);
+        expect(Math.hypot(after.x + u * after.width - anchor.x, after.y + v * after.height - anchor.y)).toBeLessThan(1.5);
+      }
+      if (!enabled) { await page.keyboard.up('Control'); }
+    });
+  }
+}
+
+test('disabling clears translation after scrolling into displaced image overflow', async ({ page }) => {
+  await open(page); await scale(page, 4);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await drag(page, 600, 350, 100, 80);
+  await page.evaluate(() => window.scrollTo(document.scrollingElement!.scrollWidth, document.scrollingElement!.scrollHeight));
+  await settle(page);
+  await setting(page, false);
+  expect(await image(page).evaluate(element => element.style.translate)).toBe('');
+});

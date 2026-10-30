@@ -220,7 +220,7 @@ export class ZoomController {
 
 			// Merge zoom fields into existing state to avoid erasing app-level fields
 			const existing = this.vscode.getState() || {};
-			this.vscode.setState({ ...existing, scale: this.scale, offsetX: newScrollX, offsetY: newScrollY, panX: this.panOffset.x, panY: this.panOffset.y });
+			this.vscode.setState({ ...existing, scale: this.scale, offsetX: window.scrollX, offsetY: window.scrollY, panX: this.panOffset.x, panY: this.panOffset.y });
 		}
 
 		this.vscode.postMessage({
@@ -429,8 +429,19 @@ export class ZoomController {
 
 	private applyPanOffset() {
 		if (!this.imageElement) { return; }
+		const scrollX = window.scrollX, scrollY = window.scrollY;
 		const { x, y } = this.panOffset;
 		this.imageElement.style.translate = x || y ? `${x}px ${y}px` : '';
+		// Translation can shrink scrollable overflow. Flush layout before measuring
+		// the browser's clamped scroll position, then absorb that axis into translation.
+		this.imageElement.getBoundingClientRect();
+		const clampedX = window.scrollX !== scrollX, clampedY = window.scrollY !== scrollY;
+		if (this.scrollToZoom && (clampedX || clampedY)) {
+			window.scrollTo(clampedX ? 0 : window.scrollX, clampedY ? 0 : window.scrollY);
+			if (clampedX) { this.panOffset.x -= scrollX; }
+			if (clampedY) { this.panOffset.y -= scrollY; }
+			this.imageElement.style.translate = `${this.panOffset.x}px ${this.panOffset.y}px`;
+		}
 		this.onScaleChanged?.();
 	}
 
@@ -438,11 +449,16 @@ export class ZoomController {
 	private clampPan() {
 		if (!this.imageElement) { return; }
 		const keep = 32;
-		const width = document.documentElement.clientWidth, height = document.documentElement.clientHeight;
-		const limitX = Math.max(0, (width + Math.min(width, this.imageElement.offsetWidth)) / 2 - keep);
-		const limitY = Math.max(0, (height + Math.min(height, this.imageElement.offsetHeight)) / 2 - keep);
-		this.panOffset.x = Math.min(limitX, Math.max(-limitX, this.panOffset.x));
-		this.panOffset.y = Math.min(limitY, Math.max(-limitY, this.panOffset.y));
+		const viewport = this.viewport();
+		const rect = this.imageElement.getBoundingClientRect();
+		// Clamp the displayed edges, including any scroll absorbed into translation.
+		const applied = this.imageElement.style.translate.split(' ');
+		const baseLeft = rect.left - (parseFloat(applied[0]) || 0);
+		const baseTop = rect.top - (parseFloat(applied[1]) || 0);
+		this.panOffset.x = Math.min(viewport.left + viewport.width - keep - baseLeft,
+			Math.max(viewport.left + keep - rect.width - baseLeft, this.panOffset.x));
+		this.panOffset.y = Math.min(viewport.top + viewport.height - keep - baseTop,
+			Math.max(viewport.top + keep - rect.height - baseTop, this.panOffset.y));
 	}
 
 	/** Safari emits GestureEvents for trackpad pinches instead of ctrl-wheel. */

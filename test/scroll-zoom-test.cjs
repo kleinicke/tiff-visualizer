@@ -5,6 +5,7 @@ const loaded = { exports: {} };
 new Function('module', 'exports', compiled.outputFiles[0].text)(loaded, loaded.exports);
 const { ZoomController } = loaded.exports;
 
+global.getComputedStyle = () => ({ paddingLeft: '0', paddingRight: '0', paddingTop: '0', paddingBottom: '0' });
 const scrolls = [];
 const scrollRange = { scrollWidth: 800, scrollHeight: 600 };
 const listeners = {};
@@ -27,7 +28,17 @@ function create({ scrollToZoom, scale = 2, isMac = true }) {
   let saved = { scale, unrelated: 'keep me' };
   const controller = new ZoomController({ isMac, constants: {}, settings: { scrollToZoom } }, { getState: () => saved, setState: next => { saved = next; } });
   controller.container = container;
-  controller.imageElement = { style: {}, offsetWidth: 200, offsetHeight: 100 };
+  controller.imageElement = {
+    style: { translate: '' },
+    offsetWidth: scrollRange.scrollWidth > 800 ? scrollRange.scrollWidth : 200,
+    offsetHeight: scrollRange.scrollHeight > 600 ? scrollRange.scrollHeight : 100,
+    getBoundingClientRect() {
+      const [x, y] = this.style.translate.split(' ').map(value => parseFloat(value) || 0);
+      return { left: Math.max(0, (800 - this.offsetWidth) / 2) - window.scrollX + x,
+        top: Math.max(0, (600 - this.offsetHeight) / 2) - window.scrollY + (y || 0),
+        width: this.offsetWidth, height: this.offsetHeight };
+    },
+  };
   controller.hasLoadedImage = true;
   controller.scale = scale;
   controller.firstZoom = () => { controller.scale = 1; };
@@ -163,7 +174,7 @@ for (const scale of ['fit', 0.5]) {
   assert.equal(saved.panX, 60); assert.equal(saved.panY, 25);
   assert.equal(controller.getCurrentState().panX, 60);
   const restored = new ZoomController(controller.settingsManager, controller.vscode);
-  restored.container = controller.container; restored.imageElement = { ...controller.imageElement, style: {} };
+  restored.container = controller.container; restored.imageElement = { ...controller.imageElement, style: { translate: '' } };
   restored.updateScale = () => {};
   const scrollTo = window.scrollTo; window.scrollTo = () => {};
   restored.applyInitialZoom(); window.scrollTo = scrollTo;
