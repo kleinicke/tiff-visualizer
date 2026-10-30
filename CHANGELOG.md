@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add the `tiffVisualizer.scrollToZoom` setting (off by default): scroll zooms about the cursor without a modifier key, and dragging the image pans it
 - Add SGI RGB image support (`.rgb`, `.rgba`, `.sgi`, `.bw`), including 8/16-bit uncompressed and RLE images.
 - Improve NumPy npy and npz dataset loading and navigation
 - rearrange right click menu

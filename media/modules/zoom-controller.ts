@@ -26,6 +26,9 @@ export class ZoomController {
 	 */
 	onScaleChanged: (() => void) | null = null;
 	private gestureScale: number | null = null;
+	/** With `scrollToZoom`: how far dragging has moved the image on an axis it has no scroll range on. */
+	private panOffset = { x: 0, y: 0 };
+	private endPan: (() => void) | null = null;
 	private touchPinch: { distance: number, scale: number, x: number, y: number } | null = null;
 
 	private viewport() {
@@ -139,9 +142,11 @@ export class ZoomController {
 				this.imageElement.style.margin = 'auto';
 			}
 			window.scrollTo(0, 0);
+			this.panOffset = { x: 0, y: 0 };
+			this.imageElement.style.translate = '';
 			// Clear zoom fields but keep other state (peerImageUris, etc.)
 			const existing = this.vscode.getState() || {};
-			this.vscode.setState({ ...existing, scale: 'fit', offsetX: 0, offsetY: 0 });
+			this.vscode.setState({ ...existing, scale: 'fit', offsetX: 0, offsetY: 0, panX: 0, panY: 0 });
 		} else {
 			const oldScale = this.scale;
 			this.scale = this._clamp(newScale as number, this._minimumScale(), constants.MAX_SCALE);
@@ -183,6 +188,9 @@ export class ZoomController {
 			this.imageElement.style.marginTop = canScrollY ? '0' : 'auto';
 			this.imageElement.style.marginBottom = canScrollY ? '0' : 'auto';
 
+			if (!this.scrollToZoom) { this.panOffset = { x: 0, y: 0 }; }
+			this.applyPanOffset();
+
 			// Recalculate element position after layout change
 			const rectAfter = this.imageElement.getBoundingClientRect();
 			const elemLeftDocAfter = window.scrollX + rectAfter.left;
@@ -201,9 +209,18 @@ export class ZoomController {
 
 			window.scrollTo(newScrollX, newScrollY);
 
+			if (this.scrollToZoom) {
+				// Whatever the scroll range could not absorb is taken by the offset, which keeps the image point under the cursor.
+				const rectNow = this.imageElement.getBoundingClientRect();
+				this.panOffset.x += centerX - (rectNow.left + centerXImage * this.scale);
+				this.panOffset.y += centerY - (rectNow.top + centerYImage * this.scale);
+				this.clampPan();
+				this.applyPanOffset();
+			}
+
 			// Merge zoom fields into existing state to avoid erasing app-level fields
 			const existing = this.vscode.getState() || {};
-			this.vscode.setState({ ...existing, scale: this.scale, offsetX: newScrollX, offsetY: newScrollY });
+			this.vscode.setState({ ...existing, scale: this.scale, offsetX: window.scrollX, offsetY: window.scrollY, panX: this.panOffset.x, panY: this.panOffset.y });
 		}
 
 		this.vscode.postMessage({
@@ -288,7 +305,8 @@ export class ZoomController {
 		// Embedded IDE controls can receive the keydown before focus reaches the
 		// image. WheelEvent carries the modifier even when that keydown was missed.
 		const isScrollWheelKeyPressed = this.settingsManager.isMac ? (e.altKey || altPressed) : (e.ctrlKey || ctrlPressed);
-		if (!isScrollWheelKeyPressed && !e.ctrlKey) { // pinching is reported as scroll wheel + ctrl
+		const scrollToZoom = this.scrollToZoom;
+		if (!scrollToZoom && !isScrollWheelKeyPressed && !e.ctrlKey) { // pinching is reported as scroll wheel + ctrl
 			return;
 		}
 
@@ -301,7 +319,11 @@ export class ZoomController {
 			this.firstZoom();
 		}
 
-		if (this.container.classList.contains('web-app') && !document.documentElement.classList.contains('jetbrains-host')) {
+		if (scrollToZoom) {
+			const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.viewport().height : 1;
+			const delta = Math.max(-100, Math.min(100, e.deltaY * unit));
+			this.updateScale((this.scale as number) * Math.exp(-delta * (e.ctrlKey ? 0.01 : 0.0025)), { x: e.clientX, y: e.clientY });
+		} else if (this.container.classList.contains('web-app') && !document.documentElement.classList.contains('jetbrains-host')) {
 			const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.viewport().height : 1;
 			const delta = Math.max(-100, Math.min(100, e.deltaY * unit));
 			this.updateScale((this.scale as number) * Math.exp(-delta * (e.ctrlKey ? 0.01 : 0.0025)));
@@ -309,6 +331,134 @@ export class ZoomController {
 			const delta = e.deltaY > 0 ? 1 : -1;
 			this.updateScale((this.scale as number) * (1 - delta * this.settingsManager.constants.SCALE_PINCH_FACTOR));
 		}
+	}
+
+	/** `tiffVisualizer.scrollToZoom`: the wheel zooms about the cursor and dragging the image pans it. */
+	get scrollToZoom(): boolean { return this.settingsManager.settings.scrollToZoom === true; }
+
+	/** Disabling drag-pan also removes its translation, including an unfinished drag. */
+	applyInteractionSettings(): void {
+		if (this.scrollToZoom) { return; }
+		this.endPan?.();
+		if (!this.panOffset.x && !this.panOffset.y) { return; }
+		this.panOffset = { x: 0, y: 0 };
+		this.applyPanOffset();
+		this.saveState();
+	}
+
+	/** Double-click fits the image only when scroll-to-zoom is enabled. */
+	handleDoubleClick(event: MouseEvent): void {
+		if (!this.scrollToZoom || !this.hasLoadedImage || event.button !== 0 || event.target !== this.imageElement) { return; }
+		event.preventDefault();
+		this.endPan?.();
+		this.updateScale('fit');
+	}
+
+	/** Start panning by dragging, including at fit. */
+	beginPan(event: MouseEvent): boolean {
+		if (!this.scrollToZoom || !this.hasLoadedImage || (event.button !== 0 && event.button !== 1)) { return false; }
+		this.endPan?.();
+		event.preventDefault();
+		let last = { x: event.clientX, y: event.clientY };
+		let moved = false;
+		this.container.classList.add('panning');
+		const move = (e: MouseEvent) => {
+			if (!moved && Math.hypot(e.clientX - event.clientX, e.clientY - event.clientY) < ZoomController.DRAG_THRESHOLD) { return; }
+			moved = true;
+			const dx = e.clientX - last.x, dy = e.clientY - last.y;
+			this.panBy(dx, dy);
+			last = { x: e.clientX, y: e.clientY };
+		};
+		const up = () => {
+			window.removeEventListener('mousemove', move, true);
+			window.removeEventListener('mouseup', up, true);
+			window.removeEventListener('blur', up);
+			this.endPan = null;
+			this.container.classList.remove('panning');
+			if (moved) { this.saveState(); }
+		};
+		this.endPan = up;
+		window.addEventListener('mousemove', move, true);
+		window.addEventListener('mouseup', up, true);
+		window.addEventListener('blur', up);
+		return true;
+	}
+
+	static readonly DRAG_THRESHOLD = 4;
+
+	/** The image point at the viewport center, including scroll and drag displacement. */
+	getRelativeCenter(): { x: number; y: number } {
+		const rect = this.imageElement?.getBoundingClientRect();
+		if (!rect?.width || !rect.height) { return { x: 0.5, y: 0.5 }; }
+		const viewport = this.viewport();
+		return {
+			x: (viewport.left + viewport.width / 2 - rect.left) / rect.width,
+			y: (viewport.top + viewport.height / 2 - rect.top) / rect.height,
+		};
+	}
+
+	/** Position a copied image point using whichever pan mechanism is enabled. */
+	centerOn(relativeX: number, relativeY: number): void {
+		if (!this.imageElement || !Number.isFinite(relativeX) || !Number.isFinite(relativeY)) { return; }
+		const rect = this.imageElement.getBoundingClientRect();
+		const viewport = this.viewport();
+		const dx = viewport.left + viewport.width / 2 - (rect.left + relativeX * rect.width);
+		const dy = viewport.top + viewport.height / 2 - (rect.top + relativeY * rect.height);
+		if (this.scrollToZoom) { this.panBy(dx, dy); }
+		else { window.scrollBy(-dx, -dy); }
+		this.saveState();
+	}
+
+	/**
+	 * Move the image by the drag distance. A moved offset returns to zero first, then the page
+	 * scrolls, and whatever scrolling cannot absorb (the page edge) becomes the offset.
+	 */
+	private panBy(dx: number, dy: number) {
+		const back = (offset: number, delta: number) => (offset * delta < 0 ? Math.sign(delta) * Math.min(Math.abs(delta), Math.abs(offset)) : 0);
+		const returnX = back(this.panOffset.x, dx), returnY = back(this.panOffset.y, dy);
+		this.panOffset.x += returnX;
+		this.panOffset.y += returnY;
+		const wantX = dx - returnX, wantY = dy - returnY;
+		const beforeX = window.scrollX, beforeY = window.scrollY;
+		window.scrollBy(0 - wantX, 0 - wantY);
+		this.panOffset.x += wantX + (window.scrollX - beforeX);
+		this.panOffset.y += wantY + (window.scrollY - beforeY);
+		this.clampPan();
+		this.applyPanOffset();
+	}
+
+	private applyPanOffset() {
+		if (!this.imageElement) { return; }
+		const scrollX = window.scrollX, scrollY = window.scrollY;
+		const { x, y } = this.panOffset;
+		this.imageElement.style.translate = x || y ? `${x}px ${y}px` : '';
+		// Translation can shrink scrollable overflow. Flush layout before measuring
+		// the browser's clamped scroll position, then absorb that axis into translation.
+		this.imageElement.getBoundingClientRect();
+		const clampedX = window.scrollX !== scrollX, clampedY = window.scrollY !== scrollY;
+		if (this.scrollToZoom && (clampedX || clampedY)) {
+			window.scrollTo(clampedX ? 0 : window.scrollX, clampedY ? 0 : window.scrollY);
+			if (clampedX) { this.panOffset.x -= scrollX; }
+			if (clampedY) { this.panOffset.y -= scrollY; }
+			this.imageElement.style.translate = `${this.panOffset.x}px ${this.panOffset.y}px`;
+		}
+		this.onScaleChanged?.();
+	}
+
+	/** Keep some of the image in view however far it is dragged. */
+	private clampPan() {
+		if (!this.imageElement) { return; }
+		const keep = 32;
+		const viewport = this.viewport();
+		const rect = this.imageElement.getBoundingClientRect();
+		// Clamp the displayed edges, including any scroll absorbed into translation.
+		const applied = this.imageElement.style.translate.split(' ');
+		const baseLeft = rect.left - (parseFloat(applied[0]) || 0);
+		const baseTop = rect.top - (parseFloat(applied[1]) || 0);
+		this.panOffset.x = Math.min(viewport.left + viewport.width - keep - baseLeft,
+			Math.max(viewport.left + keep - rect.width - baseLeft, this.panOffset.x));
+		this.panOffset.y = Math.min(viewport.top + viewport.height - keep - baseTop,
+			Math.max(viewport.top + keep - rect.height - baseTop, this.panOffset.y));
 	}
 
 	/** Safari emits GestureEvents for trackpad pinches instead of ctrl-wheel. */
@@ -374,6 +524,7 @@ export class ZoomController {
 		if (this.initialState.scale !== 'fit') {
 			window.scrollTo(this.initialState.offsetX, this.initialState.offsetY);
 		}
+		this.restorePan(this.initialState);
 	}
 
 	/**
@@ -385,7 +536,9 @@ export class ZoomController {
 			...existing,
 			scale: this.scale,
 			offsetX: window.scrollX,
-			offsetY: window.scrollY
+			offsetY: window.scrollY,
+			panX: this.panOffset.x,
+			panY: this.panOffset.y
 		});
 	}
 
@@ -396,7 +549,9 @@ export class ZoomController {
 		return {
 			scale: this.scale,
 			x: window.scrollX,
-			y: window.scrollY
+			y: window.scrollY,
+			panX: this.panOffset.x,
+			panY: this.panOffset.y
 		};
 	}
 
@@ -411,9 +566,20 @@ export class ZoomController {
 				// has reflowed the new element dimensions, without a visible delay
 				requestAnimationFrame(() => {
 					window.scrollTo(state.x, state.y);
+					this.restorePan(state);
 				});
-			}
+			} else { this.restorePan(state); }
 		}
+	}
+
+	private restorePan(state: { panX?: number; panY?: number }): void {
+		this.panOffset = {
+			x: this.scrollToZoom && Number.isFinite(state.panX) ? state.panX! : 0,
+			y: this.scrollToZoom && Number.isFinite(state.panY) ? state.panY! : 0,
+		};
+		this.clampPan();
+		this.applyPanOffset();
+		this.saveState();
 	}
 
 	/**
