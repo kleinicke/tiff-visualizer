@@ -94,8 +94,6 @@ export class ImagePreview extends MediaPreview {
 	private _datasetCoordinates: Record<string, number> = {};
 	private _datasetCurrentResource: vscode.Uri | undefined;
 
-	private readonly emptyPngDataUri = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAEElEQVR42gEFAPr/AP///wAI/AL+Sr4t6gAAAABJRU5ErkJggg==';
-
 	private readonly _sizeStatusBarEntry: SizeStatusBarEntry;
 	private readonly _zoomStatusBarEntry: ZoomStatusBarEntry;
 	private readonly _normalizationStatusBarEntry: NormalizationStatusBarEntry;
@@ -1833,21 +1831,6 @@ export class ImagePreview extends MediaPreview {
 		} catch {
 			return undefined;
 		}
-	}
-
-	private async getResourcePath(webviewEditor: vscode.WebviewPanel, resource: vscode.Uri): Promise<string> {
-		if (resource.scheme === 'git') {
-			const stat = await vscode.workspace.fs.stat(resource);
-			if (stat.size === 0) {
-				return webviewEditor.webview.asWebviewUri(vscode.Uri.joinPath(this.extensionRoot, 'media', 'loading.svg')).toString();
-			}
-		}
-
-		// Avoid adding cache busting if there is already a query string
-		if (resource.query) {
-			return webviewEditor.webview.asWebviewUri(resource).toString();
-		}
-		return webviewEditor.webview.asWebviewUri(resource).toString(true);
 	}
 
 	private extensionResource(...parts: string[]) {

@@ -1548,8 +1548,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	// Colormap conversion state
 	let colormapConversionState: ColormapConversionState | null = null;
 
-	// Original image state (for reverting from conversions)
-	let originalImageData: ImageData | null = null;
 	let hasAppliedConversion = false;
 
 	// Decoded single-channel float data produced by "Decode Colormap to Float".
@@ -1664,9 +1662,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	let planeSelection: { indices: Record<string, number> } = persistedState?.planeSelection && typeof persistedState.planeSelection === 'object'
 		? { indices: { ...(persistedState.planeSelection.indices || {}) } }
 		: { indices: {} };
-	/** Plane axes of the loaded image, kept for keyboard navigation. */
-	/** Axis signature currently rendered as slider rows, to avoid rebuilding them. */
-	let planeRenderedAxes = '';
 	let planeLoadInFlight = false;
 	let planeLoadPending = false;
 	let datasetManifest: DatasetManifest | null = null;
@@ -4826,7 +4821,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			// Reset the conversion state
 			colormapConversionState = null;
 			hasAppliedConversion = false;
-			originalImageData = null;
 			decodedColormapSource = null;
 
 			// Clear converted data from processors
