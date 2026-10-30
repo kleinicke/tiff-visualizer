@@ -28,6 +28,7 @@ export class ZoomController {
 	private gestureScale: number | null = null;
 	/** With `scrollToZoom`: how far dragging has moved the image on an axis it has no scroll range on. */
 	private panOffset = { x: 0, y: 0 };
+	private endPan: (() => void) | null = null;
 	private touchPinch: { distance: number, scale: number, x: number, y: number } | null = null;
 
 	private viewport() {
@@ -145,7 +146,7 @@ export class ZoomController {
 			this.imageElement.style.translate = '';
 			// Clear zoom fields but keep other state (peerImageUris, etc.)
 			const existing = this.vscode.getState() || {};
-			this.vscode.setState({ ...existing, scale: 'fit', offsetX: 0, offsetY: 0 });
+			this.vscode.setState({ ...existing, scale: 'fit', offsetX: 0, offsetY: 0, panX: 0, panY: 0 });
 		} else {
 			const oldScale = this.scale;
 			this.scale = this._clamp(newScale as number, this._minimumScale(), constants.MAX_SCALE);
@@ -219,7 +220,7 @@ export class ZoomController {
 
 			// Merge zoom fields into existing state to avoid erasing app-level fields
 			const existing = this.vscode.getState() || {};
-			this.vscode.setState({ ...existing, scale: this.scale, offsetX: newScrollX, offsetY: newScrollY });
+			this.vscode.setState({ ...existing, scale: this.scale, offsetX: newScrollX, offsetY: newScrollY, panX: this.panOffset.x, panY: this.panOffset.y });
 		}
 
 		this.vscode.postMessage({
@@ -332,17 +333,34 @@ export class ZoomController {
 		}
 	}
 
-	/** Safari emits GestureEvents for trackpad pinches instead of ctrl-wheel. */
 	/** `tiffVisualizer.scrollToZoom`: the wheel zooms about the cursor and dragging the image pans it. */
 	get scrollToZoom(): boolean { return this.settingsManager.settings.scrollToZoom === true; }
 
+	/** Disabling drag-pan also removes its translation, including an unfinished drag. */
+	applyInteractionSettings(): void {
+		if (this.scrollToZoom) { return; }
+		this.endPan?.();
+		if (!this.panOffset.x && !this.panOffset.y) { return; }
+		this.panOffset = { x: 0, y: 0 };
+		this.applyPanOffset();
+		this.saveState();
+	}
+
+	/** Double-click fits only the image; panel controls and the legacy mode keep their gestures. */
+	handleDoubleClick(event: MouseEvent): void {
+		if (!this.scrollToZoom || !this.hasLoadedImage || event.button !== 0 || event.target !== this.imageElement) { return; }
+		event.preventDefault();
+		this.endPan?.();
+		this.updateScale('fit');
+	}
+
 	/**
-	 * Start panning by dragging. Returns false when there is nothing to pan (fit mode or a
-	 * disabled setting). A drag past `DRAG_THRESHOLD` px reports `moved` so the caller can
+	 * Start panning by dragging, including at fit. A drag past `DRAG_THRESHOLD` px reports `moved` so the caller can
 	 * swallow the click that follows the release.
 	 */
 	beginPan(event: MouseEvent, onEnd: (moved: boolean) => void): boolean {
 		if (!this.scrollToZoom || !this.hasLoadedImage || (event.button !== 0 && event.button !== 1)) { return false; }
+		this.endPan?.();
 		event.preventDefault();
 		let last = { x: event.clientX, y: event.clientY };
 		let moved = false;
@@ -357,11 +375,16 @@ export class ZoomController {
 		const up = () => {
 			window.removeEventListener('mousemove', move, true);
 			window.removeEventListener('mouseup', up, true);
+			window.removeEventListener('blur', up);
+			this.endPan = null;
 			this.container.classList.remove('panning');
+			if (moved) { this.saveState(); }
 			onEnd(moved);
 		};
+		this.endPan = up;
 		window.addEventListener('mousemove', move, true);
 		window.addEventListener('mouseup', up, true);
+		window.addEventListener('blur', up);
 		return true;
 	}
 
@@ -403,6 +426,7 @@ export class ZoomController {
 		this.panOffset.y = Math.min(limitY, Math.max(-limitY, this.panOffset.y));
 	}
 
+	/** Safari emits GestureEvents for trackpad pinches instead of ctrl-wheel. */
 	handleGesture(event: Event & { scale?: number }) {
 		if (!this.imageElement || !this.hasLoadedImage) { return; }
 		event.preventDefault();
@@ -465,6 +489,7 @@ export class ZoomController {
 		if (this.initialState.scale !== 'fit') {
 			window.scrollTo(this.initialState.offsetX, this.initialState.offsetY);
 		}
+		this.restorePan(this.initialState);
 	}
 
 	/**
@@ -476,7 +501,9 @@ export class ZoomController {
 			...existing,
 			scale: this.scale,
 			offsetX: window.scrollX,
-			offsetY: window.scrollY
+			offsetY: window.scrollY,
+			panX: this.panOffset.x,
+			panY: this.panOffset.y
 		});
 	}
 
@@ -487,7 +514,9 @@ export class ZoomController {
 		return {
 			scale: this.scale,
 			x: window.scrollX,
-			y: window.scrollY
+			y: window.scrollY,
+			panX: this.panOffset.x,
+			panY: this.panOffset.y
 		};
 	}
 
@@ -502,9 +531,20 @@ export class ZoomController {
 				// has reflowed the new element dimensions, without a visible delay
 				requestAnimationFrame(() => {
 					window.scrollTo(state.x, state.y);
+					this.restorePan(state);
 				});
-			}
+			} else { this.restorePan(state); }
 		}
+	}
+
+	private restorePan(state: { panX?: number; panY?: number }): void {
+		this.panOffset = {
+			x: this.scrollToZoom && Number.isFinite(state.panX) ? state.panX! : 0,
+			y: this.scrollToZoom && Number.isFinite(state.panY) ? state.panY! : 0,
+		};
+		this.clampPan();
+		this.applyPanOffset();
+		this.saveState();
 	}
 
 	/**

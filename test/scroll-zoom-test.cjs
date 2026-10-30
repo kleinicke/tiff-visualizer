@@ -24,7 +24,8 @@ global.document = { body: { classList: { contains: () => false } }, scrollingEle
 function create({ scrollToZoom, scale = 2, isMac = true }) {
   const classes = new Set();
   const container = { classList: { contains: name => classes.has(name), add: name => classes.add(name), remove: name => classes.delete(name) } };
-  const controller = new ZoomController({ isMac, constants: {}, settings: { scrollToZoom } }, { getState: () => ({ scale }) });
+  let saved = { scale, unrelated: 'keep me' };
+  const controller = new ZoomController({ isMac, constants: {}, settings: { scrollToZoom } }, { getState: () => saved, setState: next => { saved = next; } });
   controller.container = container;
   controller.imageElement = { style: {}, offsetWidth: 200, offsetHeight: 100 };
   controller.hasLoadedImage = true;
@@ -137,4 +138,47 @@ drag.release();
 
 ({ controller } = create({ scrollToZoom: true }));
 assert.equal(controller.beginPan({ button: 2, clientX: 0, clientY: 0, preventDefault() {} }, () => {}), false);
+
+// Turning the setting off during a drag releases its listeners and clears only pan translation.
+({ controller } = create({ scrollToZoom: true, scale: 0.5 }));
+drag = press(controller);
+drag.move(180, 140);
+controller.settingsManager.settings.scrollToZoom = false;
+controller.applyInteractionSettings();
+assert.equal(translate(controller), '');
+assert.equal(controller.scale, 0.5);
+assert.equal(listeners.mousemove, undefined);
+assert.equal(listeners.mouseup, undefined);
+assert.equal(listeners.blur, undefined);
+assert.equal(controller.container.classList.contains('panning'), false);
+assert.equal(controller.vscode.getState().panX, 0);
+assert.equal(controller.vscode.getState().panY, 0);
+assert.equal(controller.vscode.getState().unrelated, 'keep me');
+
+// A translated fit view must survive a new controller as well as an ordinary zoomed view.
+window.scrollX = 0; window.scrollY = 0;
+for (const scale of ['fit', 0.5]) {
+  ({ controller } = create({ scrollToZoom: true, scale }));
+  drag = press(controller); drag.move(160, 125); drag.release();
+  const saved = controller.vscode.getState();
+  assert.equal(saved.panX, 60); assert.equal(saved.panY, 25);
+  assert.equal(controller.getCurrentState().panX, 60);
+  const restored = new ZoomController(controller.settingsManager, controller.vscode);
+  restored.container = controller.container; restored.imageElement = { ...controller.imageElement, style: {} };
+  restored.updateScale = () => {};
+  const scrollTo = window.scrollTo; window.scrollTo = () => {};
+  restored.applyInitialZoom(); window.scrollTo = scrollTo;
+  assert.equal(translate(restored), '60px 25px');
+}
+
+// Double-click is scoped to the displayed image and enabled mode.
+({ controller } = create({ scrollToZoom: true }));
+let prevented = false;
+controller.handleDoubleClick({ button: 0, target: {}, preventDefault() {} });
+assert.equal(controller.scale, 2);
+controller.handleDoubleClick({ button: 0, target: controller.imageElement, preventDefault() { prevented = true; } });
+assert.equal(controller.scale, 'fit'); assert.equal(prevented, true);
+controller.settingsManager.settings.scrollToZoom = false; controller.scale = 2;
+controller.handleDoubleClick({ button: 0, target: controller.imageElement, preventDefault() {} });
+assert.equal(controller.scale, 2);
 console.log('scroll zoom ok');

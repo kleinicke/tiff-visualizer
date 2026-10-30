@@ -33,7 +33,9 @@ image again.
 
 Set `tiffVisualizer.scrollToZoom` to `true` to zoom with the wheel or trackpad
 scroll alone, about the cursor, and to pan by dragging the image. A click that
-does not drag still zooms in.
+does not drag still zooms in; double-click fits the image. Turning the setting
+off clears any drag displacement while keeping the current zoom level. Drag
+position is preserved with the viewer's zoom state when its tab is restored.
 
 **Zoom In**, **Zoom Out** and
 **Reset Zoom** are also commands, so they can be bound to your own keys.

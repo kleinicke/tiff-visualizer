@@ -1722,6 +1722,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			scale: zoomState.scale,
 			offsetX: zoomState.x,
 			offsetY: zoomState.y,
+			panX: zoomState.panX,
+			panY: zoomState.panY,
 			// Layer compositing state — metadata only (images are re-decoded from
 			// their URIs on reload). Lets a layer view restore itself after the
 			// webview is unloaded and reloaded on a tab switch.
@@ -3809,6 +3811,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				const oldResourceUri = settingsManager.settings.resourceUri;
 				const updateApplyStart = performance.now();
 				const changes = settingsManager.updateSettings(message.settings);
+				zoomController.applyInteractionSettings();
 				if (message.settings && 'channelDefaults' in message.settings) {
 					applyChannelGroups(message.settings.channelDefaults?.groups);
 				}
@@ -5001,6 +5004,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				mouseHandler.consumeClick = false;
 				return;
 			}
+			if (zoomController.scrollToZoom && e.detail > 1) { return; }
 
 			// left click zoom
 			if (zoomController.scale === 'fit') {
@@ -5013,6 +5017,11 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			} else {
 				zoomController.zoomOut();
 			}
+		});
+
+		container.addEventListener('dblclick', e => {
+			if (layerManager.active && layersPanel.movingLayerId) { return; }
+			zoomController.handleDoubleClick(e);
 		});
 
 		// Scroll state saving
