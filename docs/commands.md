@@ -94,7 +94,7 @@ See [index](./index.md).
 | Open Image from URL... | `tiffVisualizer.openImageFromUrl` |  |
 | Toggle Scroll to Zoom | `tiffVisualizer.toggleScrollToZoom` |  |
 | Channels | `tiffVisualizer.toggleChannels` |  |
-| Cells | `tiffVisualizer.toggleCells` |  |
+| Toggle Cells | `tiffVisualizer.toggleCells` |  |
 | Toggle Scale Bar | `tiffVisualizer.toggleScaleBar` |  |
 
 ## Keybindings
