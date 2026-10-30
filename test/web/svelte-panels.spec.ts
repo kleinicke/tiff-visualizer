@@ -62,6 +62,8 @@ test('Svelte channels retain slider identity, solo and composite state', async (
   });
   await expect(slider).toHaveValue('40');
   expect(await slider.evaluate(element => element === (window as any).channelSlider)).toBe(true);
+  // The image viewer's panel starts with All channels folded.
+  await panel.locator('summary', { hasText: 'All channels' }).click();
   await panel.getByRole('button', { name: 'Select all', exact: true }).click();
   await expect(panel.locator('.channel-row.dimmed')).toHaveCount(0);
 });

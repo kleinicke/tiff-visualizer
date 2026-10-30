@@ -75,6 +75,8 @@ test('a configured group is listed with its missing member', async ({ page }) =>
   const panel = await open(page, 'ome_3ch_z.ome.tif');
   await expect(panel.locator('.channel-group-row')).toHaveCount(1, { timeout: 15_000 });
   await expect(panel.locator('.channel-group-row .channel-name')).toHaveText('T cells');
+  // The image viewer's panel starts with Groups folded.
+  await panel.locator('summary', { hasText: 'Groups' }).click();
   await expect(panel.getByText('T cells: not found — nope')).toBeVisible();
 });
 
