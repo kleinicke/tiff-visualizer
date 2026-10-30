@@ -895,7 +895,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	// coordinates so it travels with it, but a pan can also expose ground the
 	// patch does not cover, which needs a new rectangle.
 	window.addEventListener('resize', () => {
-		if (container.classList.contains('web-app') && zoomController.scale === 'fit') { zoomController.updateScale('fit'); }
+		if (container.classList.contains('web-app') && zoomController.scale === 'fit') { zoomController.updateScale('fit'); } else { zoomController.refit(); }
 		invalidatePyramidViewport(); scheduleLevelRefinement();
 	});
 	window.addEventListener('scroll', () => {
