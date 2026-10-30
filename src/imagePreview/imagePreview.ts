@@ -256,10 +256,10 @@ export class ImagePreview extends MediaPreview {
 			if (e.affectsConfiguration('tiffVisualizer.navigationShortcuts')
 				|| e.affectsConfiguration('tiffVisualizer.gpuAcceleration')
 				|| e.affectsConfiguration('tiffVisualizer.experimentalRegionDecode')
+				|| e.affectsConfiguration('tiffVisualizer.scrollToZoom')
+				|| e.affectsConfiguration('tiffVisualizer.channels')
 				|| e.affectsConfiguration('tiffVisualizer.cells.autoOpenPanel')
 				|| e.affectsConfiguration('tiffVisualizer.cells.cellIdCol')) {
-				|| e.affectsConfiguration('tiffVisualizer.scrollToZoom')
-				|| e.affectsConfiguration('tiffVisualizer.channels')) {
 				updateSettings('configuration-changed');
 			}
 		}));
@@ -1297,10 +1297,10 @@ export class ImagePreview extends MediaPreview {
 			plyVisualizerInstalled: !!vscode.extensions.getExtension('kleinicke.ply-visualizer'),
 			navigationShortcuts: vscode.workspace.getConfiguration('tiffVisualizer').get<Record<string, string[]>>('navigationShortcuts', {}),
 			gpuAcceleration: this.getGpuAccelerationEnabled(),
+			scrollToZoom: this.getScrollToZoom(),
+			channelDefaults: this.getChannelDefaults(),
 			cellsAutoOpenPanel: this.getCellsAutoOpenPanel(),
 			cellIdCols: getCellIdColumns()
-			scrollToZoom: this.getScrollToZoom(),
-			channelDefaults: this.getChannelDefaults()
 		};
 
 		const nonce = getNonce();
