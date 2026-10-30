@@ -228,7 +228,7 @@ export class ImagePreview extends MediaPreview {
 				showScaleBar: this._manager.settingsManager.getShowScaleBar(),
 				navigationShortcuts: vscode.workspace.getConfiguration('tiffVisualizer').get<Record<string, string[]>>('navigationShortcuts', {}),
 				gpuAcceleration: this.getGpuAccelerationEnabled(),
-			scrollToZoom: this.getScrollToZoom(),
+				scrollToZoom: this.getScrollToZoom(),
 				channelDefaults: this.getChannelDefaults(),
 				experimentalRegionDecode: this.getRegionDecodeEnabled()
 			};

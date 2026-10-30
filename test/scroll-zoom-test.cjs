@@ -62,12 +62,11 @@ assert.ok(controller.scale > 1);
 
 
 ({ controller } = create({ scrollToZoom: false }));
-assert.equal(controller.beginPan({ button: 0, clientX: 0, clientY: 0, preventDefault() {} }, () => {}), false);
+assert.equal(controller.beginPan({ button: 0, clientX: 0, clientY: 0, preventDefault() {} }), false);
 
 function press(controller, x = 100, y = 100) {
-  let ended = null;
-  assert.equal(controller.beginPan({ button: 0, clientX: x, clientY: y, preventDefault() {} }, moved => { ended = moved; }), true);
-  return { move: (mx, my) => listeners.mousemove({ clientX: mx, clientY: my }), release: () => { listeners.mouseup({}); return ended; } };
+  assert.equal(controller.beginPan({ button: 0, clientX: x, clientY: y, preventDefault() {} }), true);
+  return { move: (mx, my) => listeners.mousemove({ clientX: mx, clientY: my }), release: () => { listeners.mouseup({}); } };
 }
 const translate = c => c.imageElement.style.translate;
 
@@ -81,14 +80,14 @@ assert.deepEqual(scrolls, []);
 drag.move(90, 120);
 assert.deepEqual([window.scrollX, window.scrollY], [310, 280]);
 assert.equal(translate(controller), '');
-assert.equal(drag.release(), true);
+drag.release();
 assert.equal(controller.container.classList.contains('panning'), false);
 assert.equal(listeners.mousemove, undefined);
 
 ({ controller } = create({ scrollToZoom: true }));
 drag = press(controller);
 drag.move(102, 101);
-assert.equal(drag.release(), false);
+drag.release();
 
 window.scrollX = 790; window.scrollY = 590;
 ({ controller } = create({ scrollToZoom: true }));
@@ -137,7 +136,7 @@ assert.ok(redraws > 0);
 drag.release();
 
 ({ controller } = create({ scrollToZoom: true }));
-assert.equal(controller.beginPan({ button: 2, clientX: 0, clientY: 0, preventDefault() {} }, () => {}), false);
+assert.equal(controller.beginPan({ button: 2, clientX: 0, clientY: 0, preventDefault() {} }), false);
 
 // Turning the setting off during a drag releases its listeners and clears only pan translation.
 ({ controller } = create({ scrollToZoom: true, scale: 0.5 }));

@@ -140,3 +140,23 @@ for (const enabled of [false, true]) {
     expect(await rect(page)).toEqual(before);
   });
 }
+
+for (const enabled of [false, true]) for (const initial of ['fit', 0.5, 4] as const) {
+  test(`copy and paste restores the view at ${initial} (scroll zoom ${enabled})`, async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await open(page, enabled); await scale(page, initial);
+    await drag(page, 600, 350, 80, 40);
+    const copied = await rect(page);
+    await page.evaluate(() => window.postMessage({ type: 'copyImage' }, '*'));
+    await expect(page.getByText('Image + position copied to clipboard', { exact: true })).toBeVisible();
+    await scale(page, 'fit');
+    // Start the destination at a different displacement, to catch additive restoration.
+    await drag(page, 600, 350, -30, -20);
+    await page.evaluate(() => window.postMessage({ type: 'pastePosition' }, '*'));
+    await expect(page.getByText('Position applied', { exact: true })).toBeVisible();
+    const pasted = await rect(page);
+    expect(pasted.x).toBeCloseTo(copied.x, 0);
+    expect(pasted.y).toBeCloseTo(copied.y, 0);
+    expect(pasted.width).toBeCloseTo(copied.width, 0);
+  });
+}

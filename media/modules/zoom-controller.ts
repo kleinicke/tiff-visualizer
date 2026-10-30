@@ -346,7 +346,7 @@ export class ZoomController {
 		this.saveState();
 	}
 
-	/** Double-click fits only the image; panel controls and the legacy mode keep their gestures. */
+	/** Double-click fits the image only when scroll-to-zoom is enabled. */
 	handleDoubleClick(event: MouseEvent): void {
 		if (!this.scrollToZoom || !this.hasLoadedImage || event.button !== 0 || event.target !== this.imageElement) { return; }
 		event.preventDefault();
@@ -354,11 +354,8 @@ export class ZoomController {
 		this.updateScale('fit');
 	}
 
-	/**
-	 * Start panning by dragging, including at fit. A drag past `DRAG_THRESHOLD` px reports `moved` so the caller can
-	 * swallow the click that follows the release.
-	 */
-	beginPan(event: MouseEvent, onEnd: (moved: boolean) => void): boolean {
+	/** Start panning by dragging, including at fit. */
+	beginPan(event: MouseEvent): boolean {
 		if (!this.scrollToZoom || !this.hasLoadedImage || (event.button !== 0 && event.button !== 1)) { return false; }
 		this.endPan?.();
 		event.preventDefault();
@@ -379,7 +376,6 @@ export class ZoomController {
 			this.endPan = null;
 			this.container.classList.remove('panning');
 			if (moved) { this.saveState(); }
-			onEnd(moved);
 		};
 		this.endPan = up;
 		window.addEventListener('mousemove', move, true);
@@ -389,6 +385,29 @@ export class ZoomController {
 	}
 
 	static readonly DRAG_THRESHOLD = 4;
+
+	/** The image point at the viewport center, including scroll and drag displacement. */
+	getRelativeCenter(): { x: number; y: number } {
+		const rect = this.imageElement?.getBoundingClientRect();
+		if (!rect?.width || !rect.height) { return { x: 0.5, y: 0.5 }; }
+		const viewport = this.viewport();
+		return {
+			x: (viewport.left + viewport.width / 2 - rect.left) / rect.width,
+			y: (viewport.top + viewport.height / 2 - rect.top) / rect.height,
+		};
+	}
+
+	/** Position a copied image point using whichever pan mechanism is enabled. */
+	centerOn(relativeX: number, relativeY: number): void {
+		if (!this.imageElement || !Number.isFinite(relativeX) || !Number.isFinite(relativeY)) { return; }
+		const rect = this.imageElement.getBoundingClientRect();
+		const viewport = this.viewport();
+		const dx = viewport.left + viewport.width / 2 - (rect.left + relativeX * rect.width);
+		const dy = viewport.top + viewport.height / 2 - (rect.top + relativeY * rect.height);
+		if (this.scrollToZoom) { this.panBy(dx, dy); }
+		else { window.scrollBy(-dx, -dy); }
+		this.saveState();
+	}
 
 	/**
 	 * Move the image by the drag distance. A moved offset returns to zero first, then the page
