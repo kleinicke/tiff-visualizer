@@ -136,10 +136,12 @@ export class ZoomController {
 			// The same applies to an image smaller than the view: CSS never enlarges it, so a
 			// small image would sit tiny in the middle of the canvas. Fit enlarges it to fill the view.
 			const { width, height } = this._getNaturalSize(this.imageElement);
-			const fit = width > 0 && height > 0
+			const toView = width > 0 && height > 0
 				? Math.min(Math.max(1, viewport.width - 20) / width, Math.max(1, viewport.height - 20) / height)
 				: 1;
-			this.fitUpscaled = fit > 1;
+			// With `fitUpscale` off, only the web app enlarges (as before); everything else is capped at its natural size.
+			const fit = this.fitUpscale || this.container.classList.contains('web-app') ? toView : Math.min(1, toView);
+			this.fitUpscaled = this.fitUpscale && fit > 1;
 			if (this.fitUpscaled && fit >= constants.PIXELATION_THRESHOLD) { this.imageElement.classList.add('pixelated'); }
 			if (this.fitUpscaled || this.imageElement.classList.contains('pyramid-scene') || this.container.classList.contains('web-app')) {
 				this.imageElement.style.width = `${width * fit}px`;
@@ -342,6 +344,9 @@ export class ZoomController {
 			this.updateScale((this.scale as number) * (1 - delta * this.settingsManager.constants.SCALE_PINCH_FACTOR));
 		}
 	}
+
+	/** `tiffVisualizer.fitUpscale` (default on): Fit enlarges an image smaller than the view. */
+	get fitUpscale(): boolean { return this.settingsManager.settings.fitUpscale !== false; }
 
 	/** `tiffVisualizer.scrollToZoom`: the wheel zooms about the cursor and dragging the image pans it. */
 	get scrollToZoom(): boolean { return this.settingsManager.settings.scrollToZoom === true; }

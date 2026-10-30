@@ -27,6 +27,7 @@ interface WebviewImageSettings extends ImageSettings {
 	colorPickerShowModified: boolean;
 	gpuAcceleration: boolean;
 	scrollToZoom: boolean;
+	fitUpscale: boolean;
 	navigationShortcuts: Record<string, string[]>;
 	channelDefaults: ChannelDefaults;
 	/** Experimental rectangle reads; see the setting's description. */
@@ -229,6 +230,7 @@ export class ImagePreview extends MediaPreview {
 				navigationShortcuts: vscode.workspace.getConfiguration('tiffVisualizer').get<Record<string, string[]>>('navigationShortcuts', {}),
 				gpuAcceleration: this.getGpuAccelerationEnabled(),
 				scrollToZoom: this.getScrollToZoom(),
+				fitUpscale: this.getFitUpscale(),
 				channelDefaults: this.getChannelDefaults(),
 				experimentalRegionDecode: this.getRegionDecodeEnabled()
 			};
@@ -252,6 +254,7 @@ export class ImagePreview extends MediaPreview {
 				|| e.affectsConfiguration('tiffVisualizer.gpuAcceleration')
 				|| e.affectsConfiguration('tiffVisualizer.experimentalRegionDecode')
 				|| e.affectsConfiguration('tiffVisualizer.scrollToZoom')
+				|| e.affectsConfiguration('tiffVisualizer.fitUpscale')
 				|| e.affectsConfiguration('tiffVisualizer.channels')) {
 				updateSettings('configuration-changed');
 			}
@@ -411,6 +414,7 @@ export class ImagePreview extends MediaPreview {
 			navigationShortcuts: vscode.workspace.getConfiguration('tiffVisualizer').get<Record<string, string[]>>('navigationShortcuts', {}),
 			gpuAcceleration: this.getGpuAccelerationEnabled(),
 			scrollToZoom: this.getScrollToZoom(),
+			fitUpscale: this.getFitUpscale(),
 			channelDefaults: this.getChannelDefaults(),
 			experimentalRegionDecode: this.getRegionDecodeEnabled()
 		};
@@ -423,6 +427,10 @@ export class ImagePreview extends MediaPreview {
 		return vscode.workspace
 			.getConfiguration('tiffVisualizer')
 			.get<boolean>('gpuAcceleration', true);
+	}
+
+	private getFitUpscale(): boolean {
+		return vscode.workspace.getConfiguration('tiffVisualizer').get<boolean>('fitUpscale', true);
 	}
 
 	private getScrollToZoom(): boolean {
@@ -1278,6 +1286,7 @@ export class ImagePreview extends MediaPreview {
 			navigationShortcuts: vscode.workspace.getConfiguration('tiffVisualizer').get<Record<string, string[]>>('navigationShortcuts', {}),
 			gpuAcceleration: this.getGpuAccelerationEnabled(),
 			scrollToZoom: this.getScrollToZoom(),
+			fitUpscale: this.getFitUpscale(),
 			channelDefaults: this.getChannelDefaults()
 		};
 

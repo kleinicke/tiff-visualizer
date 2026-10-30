@@ -410,6 +410,11 @@
           "default": false,
           "description": "Zoom with the mouse wheel or trackpad scroll about the cursor without holding a modifier key, and pan by dragging the image. Single clicks do not zoom; double-click fits the image. Off by default: the wheel scrolls the image and Option (macOS) or Ctrl zooms."
         },
+        "tiffVisualizer.fitUpscale": {
+          "type": "boolean",
+          "default": true,
+          "description": "Fit enlarges images smaller than the window to fill it (with hard pixel edges above 3x) and sizes them again when the window is resized. Turn it off to keep small images at their natural size, as before."
+        },
         "tiffVisualizer.channels.autoComposite": {
           "type": "boolean",
           "default": false,
