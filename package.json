@@ -239,7 +239,7 @@
       },
       {
         "command": "tiffVisualizer.toggleCells",
-        "title": "Cells",
+        "title": "Toggle Cells",
         "category": "Scientific Image Visualizer"
       },
       {
@@ -461,7 +461,7 @@
           "enumDescriptions": [
             "Open the Channels panel, which ends in the Cells section, for multichannel OME-TIFF images with a micron scale, which is what fluorescence microscopy looks like. Other images never see it.",
             "Open the Channels panel with its Cells section for every image.",
-            "Never open it by itself. Right-click the image and choose Cells, or run Scientific Image Visualizer: Cells."
+            "Never open it by itself. Run Scientific Image Visualizer: Toggle Cells."
           ],
           "default": "auto",
           "description": "When the Channels panel and its Cells section open by themselves. It opens once per file, so closing it is not undone as you step through Z or T."

@@ -93,7 +93,7 @@ See [index](./index.md).
 | --- | --- | --- |
 | Open Image from URL... | `tiffVisualizer.openImageFromUrl` |  |
 | Channels | `tiffVisualizer.toggleChannels` |  |
-| Cells | `tiffVisualizer.toggleCells` |  |
+| Toggle Cells | `tiffVisualizer.toggleCells` |  |
 | Toggle Scale Bar | `tiffVisualizer.toggleScaleBar` |  |
 
 ## Keybindings

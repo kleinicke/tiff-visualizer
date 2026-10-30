@@ -135,10 +135,10 @@ Planned: per-channel intensity inside each outline, and loaders for GeoJSON, Ima
 
 ## Cells on other images
 
-The Cells section is not limited to Xenium bundles. In the image viewer, right-click
-and choose **Cells…**, or run **Scientific Image Visualizer: Cells** from the command
-palette, to open the Channels panel, whose last section is Cells (fold it away with
-the arrow, as in the Xenium viewer). Add a Xenium-style `cell_boundaries.parquet`
+The Cells section is not limited to Xenium bundles. In the image viewer the Channels panel has no Cells section until you ask for one:
+run **Scientific Image Visualizer: Toggle Cells** from the command palette (it appends the
+section and unfolds it if folded; running it again removes the section), or let `tiffVisualizer.cells.autoOpenPanel` add it
+for images that look segmented. Fold it away with the arrow, as in the Xenium viewer. Add a Xenium-style `cell_boundaries.parquet`
 (`cell_id`, `vertex_x`, `vertex_y` in microns) by path or with Browse, then Load it.
 Outlines, colouring by a table column and click selection work as in the Xenium viewer.
 

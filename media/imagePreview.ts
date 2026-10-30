@@ -376,6 +376,8 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 	let imageCells: ImageCells | null = null;
 	let imageCellsLoading: Promise<ImageCells> | null = null;
 	let autoCellsResource: string | null = null;
+	/** The resource whose Channels panel has been asked to show the Cells section (command palette or auto-open). */
+	let cellsSectionResource: string | null = null;
 	let compositeAuto = false;
 	let channelGeneration = -1;
 	// Sibling pages of an OME/ImageJ stack decode in the background. The panel
@@ -634,7 +636,11 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 			updateTiffPageOverlay();
 			scheduleSaveState();
 		},
-		getCells: () => { requestConfiguredCells(); return imageCells ? imageCells.model() : idleCells(); },
+		getCells: () => {
+			requestConfiguredCells();
+			if (cellsSectionResource !== currentResource()) { return null; }
+			return imageCells ? imageCells.model() : idleCells();
+		},
 		compact: true,
 		getGroups: (): ResolvedChannelGroup[] => resolveChannelGroups(allChannelGroups(), channelPlanes),
 		getGroupSolo: () => channelGroupSolo,
@@ -1084,7 +1090,7 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 		imageCells?.setResource(currentResource());
 	}
 
-	/** Apply `tiffVisualizer.cells.autoOpenPanel`: show the Channels panel (which ends in the Cells section) once per file, for the images the setting selects. */
+	/** Apply `tiffVisualizer.cells.autoOpenPanel`: append the Cells section to the Channels panel and show it once per file, for the images the setting selects. */
 	function applyAutoOpenCells(): void {
 		const resource = currentResource();
 		if (autoCellsResource === resource) { return; }
@@ -1095,6 +1101,7 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 		};
 		if (!shouldAutoOpenCells(parseCellsAutoOpen(settingsManager.settings.cellsAutoOpenPanel), hints)) { return; }
 		autoCellsResource = resource;
+		cellsSectionResource = resource;
 		channelsPanel.reveal('cells');
 		scheduleSaveState();
 	}
@@ -1685,6 +1692,7 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 		compositeChosenByUser = persistedState.compositeChosenByUser === true;
 		autoPanelResource = typeof persistedState.autoPanelResource === 'string' ? persistedState.autoPanelResource : null;
 		autoCellsResource = typeof persistedState.autoCellsResource === 'string' ? persistedState.autoCellsResource : null;
+		cellsSectionResource = typeof persistedState.cellsSectionResource === 'string' ? persistedState.cellsSectionResource : null;
 		compositeAuto = persistedState.compositeAuto === true;
 		if (persistedState.isChannelsPanelVisible) { channelsPanel.show(); }
 		if (Array.isArray(persistedState.layerGroupCollapsed)) {
@@ -1786,6 +1794,7 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 			compositeChosenByUser,
 			autoPanelResource,
 			autoCellsResource,
+			cellsSectionResource,
 			compositeAuto,
 			channelSettings,
 			channelSolo,
@@ -4334,8 +4343,14 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 				break;
 
 			case 'toggleCells':
-				// Opens the Channels panel at the Cells section (or unfolds it).
-				channelsPanel.reveal('cells');
+				// Appends the Cells section to the Channels panel and unfolds it; removes it if already appended.
+				if (cellsSectionResource === currentResource() && channelsPanel.isVisible()) {
+					cellsSectionResource = null;
+					channelsPanel.render();
+				} else {
+					cellsSectionResource = currentResource();
+					channelsPanel.reveal('cells');
+				}
 				scheduleSaveState();
 				break;
 
@@ -4345,6 +4360,8 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 
 			case 'configuredCellSources':
 				if (message.resource === currentResource() && Array.isArray(message.specs) && message.specs.length > 0) {
+					cellsSectionResource = message.resource;
+					channelsPanel.render();
 					void loadImageCells().then(cells => cells.onConfigured(message.resource, message.specs));
 				}
 				break;
@@ -5260,10 +5277,6 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 				// Opens the panel at the Channels section, or unfolds it when the panel is already open.
 				displayItems.push(createMenuItem('Channels…', () => { channelsPanel.reveal('channels'); scheduleSaveState(); }));
 			}
-
-			// One entry like Measure. The panel is empty until a segmentation is
-			// added, so an image nobody asks cells for is unchanged.
-			measureItems.push(createMenuItem('Cells…', () => { channelsPanel.reveal('cells'); scheduleSaveState(); }));
 
 			// Measurement is one entry, not a submenu of eleven: the tools live
 			// inside the panel, so the menu stays as short as it is today.
