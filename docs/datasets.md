@@ -164,19 +164,22 @@ mapping.
 
 ### Keyboard layouts and preferred navigation keys
 
-Navigation uses physical key positions across all formats. The defaults are the
-US bracket positions for control 1, left/right arrows for control 2,
-Shift+comma/period for control 3, and Shift+bracket positions for control 4.
-A lone slice slider uses control 2's keys; a lone dropdown keeps control 1's keys.
-Literal `[ ]`, `< >`, `{ }` and PageUp/PageDown remain alternatives for the
-corresponding default bindings. File collections keep the left/right arrows.
+On US keyboards the default hints remain `[ ]`, `← →`, `< >`, and `{ }`.
+Type those symbols normally (the last two pairs use Shift on US keyboards).
+On other layouts, navigation selects distinct unshifted pairs near those
+positions: bracket-position keys, comma/period, then semicolon/quote. For example,
+a German layout uses `Ü +`, `← →`, `, .`, and `Ö Ä`. Unavailable or reported dead
+keys are skipped in favour of another pair, with PageUp/PageDown and Home/End as
+fallbacks. The hints show the selected keys.
 
-The hints display the active bindings using the keyboard layout where the host
-supports layout lookup. For example, German bracket-position hints become
-`Ü +`, and the shifted pair becomes `Shift+Ü Shift++`. If layout lookup is
-unavailable, familiar symbols (such as `[ ]`) are shown until an unmodified key is pressed;
-its observed label then updates the hint. Layout lookup failure never disables
-navigation.
+A lone slice slider uses control 2's keys; a lone dropdown keeps control 1's keys.
+Literal `[ ]`, `< >`, `{ }` remain alternatives for the corresponding defaults.
+PageUp/PageDown also work for control 1 unless that pair is assigned elsewhere.
+File collections keep the left/right arrows.
+
+Layout lookup is optional. Without it, the familiar US defaults are shown until
+an observed unmodified punctuation key identifies a different layout. Hints and
+bindings update together when the layout changes.
 
 In VS Code/Cursor, set **Scientific Image Visualizer: Navigation Shortcuts**
 (`tiffVisualizer.navigationShortcuts`) in user settings to choose preferred keys:

@@ -168,7 +168,10 @@ export class LayersPanel {
 	}
 
 	private snapshot(): LayersModel {
-		return { host: this, tree: buildLayerDisplayTree(this.manager.layers),
+		// The manager mutates layer metadata in place. Give Svelte fresh metadata
+		// identities so external edits (including drag offsets) refresh controls.
+		// Pixel buffers remain shared; refreshing the panel must not copy them.
+		return { host: this, tree: buildLayerDisplayTree(this.manager.layers.map(layer => ({ ...layer }))),
 			ui: { movingLayerId: this.movingLayerId, pendingRemoveId: this._pendingRemoveId,
 				collapsedGroups: new Set(this.collapsedGroups), expandedEffectStacks: new Set(this.expandedEffectStacks) },
 			backend: this.compositorBackend, resolvedBackend: this.resolvedCompositorBackend,

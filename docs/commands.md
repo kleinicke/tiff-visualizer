@@ -92,6 +92,7 @@ See [index](./index.md).
 | Command | ID | Keybinding |
 | --- | --- | --- |
 | Open Image from URL... | `tiffVisualizer.openImageFromUrl` |  |
+| Toggle Scroll to Zoom | `tiffVisualizer.toggleScrollToZoom` |  |
 | Channels | `tiffVisualizer.toggleChannels` |  |
 | Toggle Cells | `tiffVisualizer.toggleCells` |  |
 | Toggle Scale Bar | `tiffVisualizer.toggleScaleBar` |  |
@@ -120,6 +121,7 @@ letters select tools — see [measurement](./measure.md).
 | Setting | Default | Description |
 | --- | --- | --- |
 | `tiffVisualizer.navigationShortcuts` | `{}` |  |
+| `tiffVisualizer.scrollToZoom` | `false` | Zoom with the mouse wheel or trackpad scroll about the cursor without holding a modifier key, and pan by dragging the image. Single clicks do not zoom; double-click fits the image. Off by default: the wheel scrolls the image and Option (macOS) or Ctrl zooms. |
 | `tiffVisualizer.channels.autoComposite` | `false` | Open images whose channels are described by OME-TIFF or ImageJ metadata (fluorescence stacks, hyperstacks) in composite mode. Ordinary RGB images are not affected. Turning composite off by hand keeps it off for that preview. |
 | `tiffVisualizer.channels.autoOpenPanel` | `false` | Open the Channels panel when an image whose channels are described by OME-TIFF or ImageJ metadata opens. For multi-page stacks it opens before the other channels have decoded, so the loading progress is visible. Applies once per file; ordinary RGB images are not affected. |
 | `tiffVisualizer.channels.colorsByName` | `{}` | Channel tints by channel name, matched case-insensitively, for example {"DAPI": "#3399ff", "GFP": "#00ff00"}. Takes precedence over colorsByNumber and over colours stored in the file. |

@@ -27,6 +27,7 @@ interface WebviewImageSettings extends ImageSettings {
 	nanColor: NanColorName;
 	colorPickerShowModified: boolean;
 	gpuAcceleration: boolean;
+	scrollToZoom: boolean;
 	navigationShortcuts: Record<string, string[]>;
 	channelDefaults: ChannelDefaults;
 	cellsAutoOpenPanel: 'auto' | 'always' | 'never';
@@ -90,6 +91,8 @@ export class ImagePreview extends MediaPreview {
 	private _preloadedImageData: Map<string, { uri: vscode.Uri; webviewUri: string; loaded: boolean }> = new Map();
 	private _currentComparisonState: { peerUris: string[]; isShowingPeer: boolean } | undefined;
 	private _datasetManifest: DatasetManifest | undefined;
+	// Folder datasets cannot be reconstructed from one of their single-frame files.
+	private readonly _collectionDatasets = new Map<string, DatasetManifest>();
 	private _datasetSeriesIndex = 0;
 	private _datasetCoordinates: Record<string, number> = {};
 	private _datasetCurrentResource: vscode.Uri | undefined;
@@ -228,6 +231,7 @@ export class ImagePreview extends MediaPreview {
 				showScaleBar: this._manager.settingsManager.getShowScaleBar(),
 				navigationShortcuts: vscode.workspace.getConfiguration('tiffVisualizer').get<Record<string, string[]>>('navigationShortcuts', {}),
 				gpuAcceleration: this.getGpuAccelerationEnabled(),
+				scrollToZoom: this.getScrollToZoom(),
 				channelDefaults: this.getChannelDefaults(),
 				cellsAutoOpenPanel: this.getCellsAutoOpenPanel(),
 				cellIdCols: getCellIdColumns(),
@@ -252,9 +256,10 @@ export class ImagePreview extends MediaPreview {
 			if (e.affectsConfiguration('tiffVisualizer.navigationShortcuts')
 				|| e.affectsConfiguration('tiffVisualizer.gpuAcceleration')
 				|| e.affectsConfiguration('tiffVisualizer.experimentalRegionDecode')
-				|| e.affectsConfiguration('tiffVisualizer.channels')
 				|| e.affectsConfiguration('tiffVisualizer.cells.autoOpenPanel')
 				|| e.affectsConfiguration('tiffVisualizer.cells.cellIdCol')) {
+				|| e.affectsConfiguration('tiffVisualizer.scrollToZoom')
+				|| e.affectsConfiguration('tiffVisualizer.channels')) {
 				updateSettings('configuration-changed');
 			}
 		}));
@@ -412,6 +417,7 @@ export class ImagePreview extends MediaPreview {
 			showScaleBar: this._manager.settingsManager.getShowScaleBar(),
 			navigationShortcuts: vscode.workspace.getConfiguration('tiffVisualizer').get<Record<string, string[]>>('navigationShortcuts', {}),
 			gpuAcceleration: this.getGpuAccelerationEnabled(),
+			scrollToZoom: this.getScrollToZoom(),
 			channelDefaults: this.getChannelDefaults(),
 			cellsAutoOpenPanel: this.getCellsAutoOpenPanel(),
 			cellIdCols: getCellIdColumns(),
@@ -426,6 +432,10 @@ export class ImagePreview extends MediaPreview {
 		return vscode.workspace
 			.getConfiguration('tiffVisualizer')
 			.get<boolean>('gpuAcceleration', true);
+	}
+
+	private getScrollToZoom(): boolean {
+		return vscode.workspace.getConfiguration('tiffVisualizer').get<boolean>('scrollToZoom', false);
 	}
 
 	private getChannelDefaults(): ChannelDefaults {
@@ -603,6 +613,8 @@ export class ImagePreview extends MediaPreview {
 
 	public setDatasetManifest(manifest: DatasetManifest): void {
 		this._datasetManifest = manifest;
+		const entry = this._imageCollection[this._currentImageIndex] || this.resource;
+		this._collectionDatasets.set(entry.toString(), manifest);
 		this._datasetSeriesIndex = Math.max(0, Math.min(manifest.series.length - 1, manifest.initialSeriesIndex || 0));
 		this._datasetCoordinates = { ...(manifest.initialCoordinates || {}) };
 		const resources = manifest.series.flatMap(series => series.planes.map(plane => vscode.Uri.parse(plane.resourceUri)));
@@ -718,6 +730,7 @@ export class ImagePreview extends MediaPreview {
 
 	public async registerOmeDataset(description: any): Promise<void> {
 		if (this._datasetManifest || !description) { return; }
+		const generation = this._switchGeneration;
 		const currentResource = description.currentResourceUri ? vscode.Uri.parse(description.currentResourceUri) : this.getCurrentImage();
 		const baseDirectory = Utils.dirname(currentResource);
 		const resolveFile = (fileName: string | undefined): vscode.Uri | undefined => {
@@ -812,6 +825,7 @@ export class ImagePreview extends MediaPreview {
 			initialSeriesIndex,
 			initialCoordinates: { ...currentPlane.coordinates },
 		};
+		if (generation !== this._switchGeneration) { return; }
 		this.setDatasetManifest(manifest);
 		if (missing > 0) {
 			vscode.window.showWarningMessage(`OME dataset opened with ${missing} unavailable plane mapping${missing === 1 ? '' : 's'}.`);
@@ -995,6 +1009,7 @@ export class ImagePreview extends MediaPreview {
 		const removedKey = this._imageCollection[this._currentImageIndex].toString();
 		this._imageCollection.splice(this._currentImageIndex, 1);
 		this._preloadedImageData.delete(removedKey);
+		this._collectionDatasets.delete(removedKey);
 
 		// If we removed the last item, step back one index
 		if (this._currentImageIndex >= this._imageCollection.length) {
@@ -1106,6 +1121,11 @@ export class ImagePreview extends MediaPreview {
 	}
 
 	private postSwitchToImage(newResource: vscode.Uri, webviewUri: string | undefined, loadStartTime: number, source: { token: string; size: number; mtime: number } | undefined): void {
+		// Dataset navigation belongs to the outgoing entry, not the collection.
+		this._datasetManifest = undefined;
+		this._datasetCurrentResource = undefined;
+		this._datasetSeriesIndex = 0;
+		this._datasetCoordinates = {};
 		// Send switch request to webview
 		this.postViewerMessage({
 			type: 'switchToImage',
@@ -1119,6 +1139,9 @@ export class ImagePreview extends MediaPreview {
 			},
 			source,
 		});
+
+		const dataset = this._collectionDatasets.get(newResource.toString());
+		if (dataset) { this.setDatasetManifest(dataset); }
 
 		// Update overlay
 		this.updateImageCollectionOverlay();
@@ -1274,9 +1297,10 @@ export class ImagePreview extends MediaPreview {
 			plyVisualizerInstalled: !!vscode.extensions.getExtension('kleinicke.ply-visualizer'),
 			navigationShortcuts: vscode.workspace.getConfiguration('tiffVisualizer').get<Record<string, string[]>>('navigationShortcuts', {}),
 			gpuAcceleration: this.getGpuAccelerationEnabled(),
-			channelDefaults: this.getChannelDefaults(),
 			cellsAutoOpenPanel: this.getCellsAutoOpenPanel(),
 			cellIdCols: getCellIdColumns()
+			scrollToZoom: this.getScrollToZoom(),
+			channelDefaults: this.getChannelDefaults()
 		};
 
 		const nonce = getNonce();

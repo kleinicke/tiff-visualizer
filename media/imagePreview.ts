@@ -1815,6 +1815,8 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 			scale: zoomState.scale,
 			offsetX: zoomState.x,
 			offsetY: zoomState.y,
+			panX: zoomState.panX,
+			panY: zoomState.panY,
 			// Layer compositing state — metadata only (images are re-decoded from
 			// their URIs on reload). Lets a layer view restore itself after the
 			// webview is unloaded and reloaded on a tab switch.
@@ -2443,46 +2445,7 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 				return;
 			}
 			const ome = tiffProcessor.omeMetadata;
-			if (ome && !datasetManifest) {
-				const images = ome.images?.length ? ome.images : [ome];
-				const externalPlaneCount = images.flatMap((image: any) => Object.values(image.coordinateToPlane || {})).filter((plane: any) => !!plane.fileName).length;
-				const requestKey = `${ome.uuid || ome.imageId || ''}:${images.length}:${externalPlaneCount}`;
-				if (externalPlaneCount > 0 && requestKey !== omeDatasetRequestKey) {
-					omeDatasetRequestKey = requestKey;
-					vscode.postMessage({
-						type: 'registerOmeDataset',
-						dataset: {
-							uuid: ome.uuid,
-							series: images.map((image: any) => ({
-								imageId: image.imageId,
-								imageName: image.imageName,
-								sizeC: image.planeSizeC,
-								sizeZ: image.sizeZ,
-								sizeT: image.sizeT,
-								channelNames: image.channels.map((channel: any) => channel.name),
-								planes: Object.values(image.coordinateToPlane || {}),
-							})),
-							currentResourceUri: settingsManager.settings.resourceUri,
-							currentPageIndex: tiffProcessor.pageIndex,
-						},
-					});
-				}
-			} else if (tiffProcessor.omeBinaryOnly && !datasetManifest) {
-				const reference = tiffProcessor.omeBinaryOnly;
-				const requestKey = `binary-only:${reference.metadataFile}:${settingsManager.settings.resourceUri}`;
-				if (requestKey !== omeDatasetRequestKey) {
-					omeDatasetRequestKey = requestKey;
-					vscode.postMessage({
-						type: 'registerOmeDataset',
-						dataset: {
-							metadataFile: reference.metadataFile,
-							metadataUuid: reference.uuid,
-							currentResourceUri: settingsManager.settings.resourceUri,
-							currentPageIndex: tiffProcessor.pageIndex,
-						},
-					});
-				}
-			}
+			registerTiffDataset();
 			mouseHandler.setPhysicalPixelSize(ome ? {
 				x: ome.physicalSizeX,
 				y: ome.physicalSizeY,
@@ -2571,13 +2534,7 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 				onImageError(tooLargeMessage(result.canvas.width, result.canvas.height));
 				return;
 			}
-			if (processor === dicomProcessor && !datasetManifest && Number(processor.metadata.frames || 1) > 1) {
-				vscode.postMessage({
-					type: 'registerDicomFrames',
-					frames: Number(processor.metadata.frames),
-					frameLabels: Array.isArray(processor.metadata.frameLabels) ? processor.metadata.frameLabels : undefined,
-				});
-			}
+			if (processor === dicomProcessor) { registerDicomDataset(); }
 			if (isPlaneNavProcessor(processor)) {
 				// Show completed planes during scrubbing, but keep the controls at
 				// the newest requested position rather than the older decoded one.
@@ -3947,6 +3904,7 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 				const oldResourceUri = settingsManager.settings.resourceUri;
 				const updateApplyStart = performance.now();
 				const changes = settingsManager.updateSettings(message.settings);
+				zoomController.applyInteractionSettings();
 				if (message.settings && 'channelDefaults' in message.settings) {
 					applyChannelGroups(message.settings.channelDefaults?.groups);
 				}
@@ -4187,7 +4145,6 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 				datasetManifest = message.manifest || null;
 				datasetSeriesIndex = Number(message.seriesIndex || 0);
 				datasetCoordinates = { ...(message.coordinates || {}) };
-				imageCollection = { totalImages: 1, currentIndex: 0, show: false };
 				updateImageCollectionOverlay(imageCollection);
 				updateDatasetOverlay(false);
 				{
@@ -4246,6 +4203,7 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 				break;
 
 			case 'switchToImage':
+				resetDatasetNavigation();
 				_pendingZoomStateExplicit = !!message.zoomState;
 				if (Number.isFinite(Number(message.loadStartTime))) {
 					extensionLoadStartTime = Number(message.loadStartTime);
@@ -5126,52 +5084,17 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 			zoomController.handleWheelZoom(e, keyState.ctrlPressed, keyState.altPressed);
 		}, { passive: false });
 
-		// Mouse click handling for zoom
+		// Single clicks leave the view unchanged; dragging pans in scroll-to-zoom mode.
 		container.addEventListener('mousedown', (e) => {
-			if (!imageElement || !hasLoadedImage) {
-				return;
+			if (!imageElement || !hasLoadedImage) { return; }
+			if (e.target === imageElement || e.target === container) {
+				zoomController.beginPan(e);
 			}
-
-			if (e.button !== 0 || e.target !== imageElement) {
-				return;
-			}
-
-			const keyState = mouseHandler.getKeyboardState();
-			mouseHandler.consumeClick = !mouseHandler.isActive;
 		});
 
-		container.addEventListener('click', (e) => {
-			if (!imageElement || !hasLoadedImage) {
-				return;
-			}
-
-			// The website toolbar, status bar, and popovers live inside this body,
-			// too. Only a click on the displayed pixels is an image zoom gesture.
-			if (e.button !== 0 || e.target !== imageElement) {
-				return;
-			}
-
-			// In layer move mode, a click on the image moves the layer — don't zoom.
-			if (layerManager.active && layersPanel.movingLayerId) {
-				return;
-			}
-
-			if (mouseHandler.consumeClick) {
-				mouseHandler.consumeClick = false;
-				return;
-			}
-
-			// left click zoom
-			if (zoomController.scale === 'fit') {
-				zoomController.firstZoom();
-			}
-
-			const keyState = mouseHandler.getKeyboardState();
-			if (!(settingsManager.isMac ? keyState.altPressed : keyState.ctrlPressed)) { // zoom in
-				zoomController.zoomIn();
-			} else {
-				zoomController.zoomOut();
-			}
+		container.addEventListener('dblclick', e => {
+			if (layerManager.active && layersPanel.movingLayerId) { return; }
+			zoomController.handleDoubleClick(e);
 		});
 
 		// Scroll state saving
@@ -5484,7 +5407,8 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 				// physical key to another row's old punctuation shortcut.
 				for (const legacy of [false, true]) {
 					for (let position = 0; position < Math.min(navControls.length, 4); position++) {
-						const binding = navControls.length === 1 && !navControls[0]?.isChoice ? 1 : position;
+						const binding = navigationKeys.bindings(navControls, imageCollection.totalImages > 1)[position];
+						if (binding < 0) continue;
 						const delta = legacy ? navigationKeys.legacyStep(e, binding) : navigationKeys.step(e, binding);
 						if (!delta) continue;
 						e.preventDefault(); e.stopPropagation();
@@ -5684,21 +5608,10 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 	}
 	let navControls: NavControl[] = [];
 
-	/**
-	 * Keys per control position.
-	 *
-	 * A lone slider gets the ARROWS; a lone dropdown keeps the brackets even
-	 * when selecting an item removes all additional axes. From two controls
-	 * up, the dropdown sits at the first position with
-	 * `[ ]` and the first slider keeps the arrows — which is exactly what
-	 * DICOM already did, so its muscle memory survives unchanged.
-	 */
+	/** Hints and key dispatch share the same available-binding order. */
 	function navKeyHints(controls: readonly { isChoice?: boolean }[]): string[] {
-		// A single SLIDER gets the arrows: it is the obvious default and there is
-		// nothing to disambiguate. Everything else — a dropdown, or more than one
-		// control — starts at `[ ]` so the ordering is uniform.
-		if (controls.length === 1 && !controls[0]?.isChoice) { return [navigationKeys.hint(1)]; }
-		return [0, 1, 2, 3].map(position => navigationKeys.hint(position));
+		return navigationKeys.bindings(controls, imageCollection.totalImages > 1)
+			.map(binding => binding < 0 ? '' : navigationKeys.hint(binding));
 	}
 
 	/** The control a given shortcut pair drives, if there is one. */
@@ -5872,6 +5785,20 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 		return best ? { ...best } : desired;
 	}
 
+	/** Clear file-owned navigation before opening another collection entry. */
+	function resetDatasetNavigation() {
+		datasetManifest = null;
+		datasetSeriesIndex = 0;
+		datasetCoordinates = {};
+		datasetLoading = false;
+		datasetRequestInFlight = false;
+		pendingDatasetRequest = null;
+		clearTimeout(datasetRequestTimer);
+		omeDatasetRequestKey = '';
+		updateDatasetOverlay(false);
+	}
+
+
 	/**
 	 * Dataset navigation keeps at most one plane request in flight. A slider
 	 * dragged across a study asks for a plane on every step; sent straight
@@ -5881,6 +5808,7 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 	 * plane loads and is sent the moment it is shown: the view keeps updating
 	 * during the drag and lands on the final plane one load later.
 	 */
+
 	function requestDatasetNavigation(seriesIndex: number, coordinates: Record<string, number>) {
 		if (!datasetManifest) { return; }
 		datasetLoading = true;
@@ -7272,6 +7200,10 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 		if (!overlayElement) return;
 
 		imageCollection = data;
+		if (navigationView) {
+			navigationModel = { ...navigationModel, hints: navKeyHints(navControls) };
+			navigationView.update(navigationModel);
+		}
 
 		if (data.show && data.totalImages > 1) {
 			if (activeCounterInput) {
@@ -7289,6 +7221,60 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 		} else {
 			overlayElement.style.display = 'none';
 			if (filenameBadge) filenameBadge.style.display = datasetManifest ? 'block' : 'none';
+		}
+	}
+
+	function registerTiffDataset() {
+		const ome = tiffProcessor.omeMetadata;
+		if (ome && !datasetManifest) {
+			const images = ome.images?.length ? ome.images : [ome];
+			const externalPlaneCount = images.flatMap((image: any) => Object.values(image.coordinateToPlane || {})).filter((plane: any) => !!plane.fileName).length;
+			const requestKey = `${ome.uuid || ome.imageId || ''}:${images.length}:${externalPlaneCount}`;
+			if (externalPlaneCount > 0 && requestKey !== omeDatasetRequestKey) {
+				omeDatasetRequestKey = requestKey;
+				vscode.postMessage({
+					type: 'registerOmeDataset',
+					dataset: {
+						uuid: ome.uuid,
+						series: images.map((image: any) => ({
+							imageId: image.imageId,
+							imageName: image.imageName,
+							sizeC: image.planeSizeC,
+							sizeZ: image.sizeZ,
+							sizeT: image.sizeT,
+							channelNames: image.channels.map((channel: any) => channel.name),
+							planes: Object.values(image.coordinateToPlane || {}),
+						})),
+						currentResourceUri: settingsManager.settings.resourceUri,
+						currentPageIndex: tiffProcessor.pageIndex,
+					},
+				});
+			}
+		} else if (tiffProcessor.omeBinaryOnly && !datasetManifest) {
+			const reference = tiffProcessor.omeBinaryOnly;
+			const requestKey = `binary-only:${reference.metadataFile}:${settingsManager.settings.resourceUri}`;
+			if (requestKey !== omeDatasetRequestKey) {
+				omeDatasetRequestKey = requestKey;
+				vscode.postMessage({
+					type: 'registerOmeDataset',
+					dataset: {
+						metadataFile: reference.metadataFile,
+						metadataUuid: reference.uuid,
+						currentResourceUri: settingsManager.settings.resourceUri,
+						currentPageIndex: tiffProcessor.pageIndex,
+					},
+				});
+			}
+		}
+	}
+
+	function registerDicomDataset() {
+		if (!datasetManifest && Number(dicomProcessor.metadata.frames || 1) > 1) {
+			vscode.postMessage({
+				type: 'registerDicomFrames',
+				frames: Number(dicomProcessor.metadata.frames),
+				frameLabels: Array.isArray(dicomProcessor.metadata.frameLabels) ? dicomProcessor.metadata.frameLabels : undefined,
+			});
 		}
 	}
 
@@ -7330,6 +7316,8 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 			mouseHandler.setGeoReference(tiffProcessor.geoReference);
 			updateTiffPageOverlay();
 		}
+		if (resolveFormat(resourceUri, formatHint)?.kind === 'tiff') { registerTiffDataset(); }
+		if (resolveFormat(resourceUri, formatHint)?.kind === 'dicom') { registerDicomDataset(); }
 		installCachedPlaceholder(cache.snapshot.width, cache.snapshot.height);
 		vscode.postMessage({ type: 'formatInfo', value: { ...cache.formatInfo, isInitialLoad: true, decodedWith: 'decoded-cache' } });
 		return true;
@@ -7676,47 +7664,18 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 		}
 
 		// Store the current position and zoom state for paste position feature
-		// Position is stored as relative coordinates (0-1) for cross-resolution compatibility
+		// Relative coordinates also preserve views dragged beyond the image center.
 		if (canvas && imageElement) {
 			const zoomState = zoomController.getCurrentState();
 			const imageWidth = canvas.width;
 			const imageHeight = canvas.height;
 
-			// Calculate the center point of the viewport in image coordinates
-			// This is what the user is looking at
-			let centerXImage: number, centerYImage: number;
+			const center = zoomController.getRelativeCenter();
 
-			if (zoomState.scale === 'fit') {
-				// In fit mode, the center is simply the image center
-				centerXImage = imageWidth / 2;
-				centerYImage = imageHeight / 2;
-			} else {
-				// In zoomed mode, calculate the visible center point
-				const displayedWidth = imageWidth * zoomState.scale;
-				const displayedHeight = imageHeight * zoomState.scale;
-
-				// Get the element's position
-				const rect = imageElement.getBoundingClientRect();
-				const elemLeftDoc = window.scrollX + rect.left;
-				const elemTopDoc = window.scrollY + rect.top;
-
-				// Viewport center in document coordinates
-				const viewportCenterX = window.scrollX + container.clientWidth / 2;
-				const viewportCenterY = window.scrollY + container.clientHeight / 2;
-
-				// Convert to image coordinates
-				centerXImage = (viewportCenterX - elemLeftDoc) / zoomState.scale;
-				centerYImage = (viewportCenterY - elemTopDoc) / zoomState.scale;
-
-				// Clamp to valid image bounds
-				centerXImage = Math.max(0, Math.min(imageWidth, centerXImage));
-				centerYImage = Math.max(0, Math.min(imageHeight, centerYImage));
-			}
-
-			// Store as relative position (0-1) for cross-resolution compatibility
+			// Relative positions work across image resolutions, including off-image centers.
 			copiedPositionState = {
-				relativeX: centerXImage / imageWidth,
-				relativeY: centerYImage / imageHeight,
+				relativeX: center.x,
+				relativeY: center.y,
 				scale: zoomState.scale,
 				sourceWidth: imageWidth,
 				sourceHeight: imageHeight
@@ -7817,39 +7776,8 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 			targetScale = Math.max(constants.MIN_SCALE, Math.min(constants.MAX_SCALE, targetScale));
 		}
 
-		// Apply the zoom and position
-		if (targetScale === 'fit') {
-			zoomController.updateScale('fit');
-		} else {
-			// First set the scale (this will center on current view)
-			zoomController.updateScale(targetScale);
-
-			// Then scroll to center on the target point
-			// We need to wait a tick for the scale to be applied
-			setTimeout(() => {
-				if (!imageElement) return;
-				const rect = imageElement.getBoundingClientRect();
-				const elemLeftDoc = window.scrollX + rect.left;
-				const elemTopDoc = window.scrollY + rect.top;
-
-				// Calculate where the target center should be in document coordinates
-				const targetDocX = elemLeftDoc + targetCenterX * (targetScale as number);
-				const targetDocY = elemTopDoc + targetCenterY * (targetScale as number);
-
-				// Scroll to center this point in the viewport
-				const newScrollX = targetDocX - container.clientWidth / 2;
-				const newScrollY = targetDocY - container.clientHeight / 2;
-
-				// Clamp to valid scroll range
-				const maxScrollX = Math.max(0, document.documentElement.scrollWidth - container.clientWidth);
-				const maxScrollY = Math.max(0, document.documentElement.scrollHeight - container.clientHeight);
-
-				window.scrollTo(
-					Math.max(0, Math.min(maxScrollX, newScrollX)),
-					Math.max(0, Math.min(maxScrollY, newScrollY))
-				);
-			}, 50);
-		}
+		zoomController.updateScale(targetScale);
+		zoomController.centerOn(state.relativeX, state.relativeY);
 
 		// Show success notification with info about any scaling applied
 		const sameSize = sourceWidth === targetWidth && sourceHeight === targetHeight;
