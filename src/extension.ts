@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { BinarySizeStatusBarEntry } from './binarySizeStatusBarEntry';
 import { registerImagePreviewSupport } from './imagePreview/index';
+import { registerXeniumSupport } from './xenium/xeniumEditor';
 
 // Shared output channel for the extension
 let outputChannel: vscode.OutputChannel;
@@ -31,4 +32,5 @@ export function activate(context: vscode.ExtensionContext) {
 
 	const disposable = registerImagePreviewSupport(context, binarySizeStatusBarEntry);
 	context.subscriptions.push(disposable);
+	context.subscriptions.push(registerXeniumSupport(context));
 }

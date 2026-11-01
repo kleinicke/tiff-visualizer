@@ -21,6 +21,9 @@
         "./decode-worker.ts",
         "./layer-compositor-worker.ts",
         "./comparisonPanel.ts",
+        "./xenium-viewer.ts",
+        "./xenium-tile-worker.ts",
+        "./xenium-cells-worker.ts",
         "./modules/**/*.ts",
         "./types/**/*.d.ts"
     ],

@@ -132,4 +132,9 @@ declare module '*/wasm/codec-wasm.js' {
     export const czi_region_plan: any;
     export const decode_czi_region: any;
     export const decode_jpegxr_fast: any;
+    export class TiffRegionDecoder {
+        constructor(data: Uint8Array);
+        decode(pageIndex: number, x: number, y: number, width: number, height: number): any;
+        free(): void;
+    }
 }

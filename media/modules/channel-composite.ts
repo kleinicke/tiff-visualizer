@@ -214,6 +214,20 @@ export function channelStats(plane: ChannelPlane, step = 1): ChannelStats {
 	return { min, max, count, nonFiniteCount: nonFinite };
 }
 
+/** Counts of finite samples in `bins` equal bins across [min, max]. */
+export function channelHistogram(plane: ChannelPlane, min: number, max: number, bins: number, step = 1): number[] {
+	const counts = new Array<number>(bins).fill(0);
+	const span = max - min;
+	if (!(span > 0)) { return counts; }
+	const data = plane.data;
+	for (let i = 0; i < data.length; i += step) {
+		const value = Number(data[i]);
+		if (!Number.isFinite(value)) { continue; }
+		counts[Math.max(0, Math.min(bins - 1, Math.floor((value - min) / span * bins)))]++;
+	}
+	return counts;
+}
+
 /**
  * Percentile-based auto range.
  *

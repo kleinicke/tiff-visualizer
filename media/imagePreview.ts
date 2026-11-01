@@ -45,7 +45,9 @@ import {
 	parseChannelGroups,
 	resolveChannelGroups,
 	suggestedChannelColors,
+	type ChannelGroupConfig,
 	type ChannelPlane,
+	type ResolvedChannelGroup,
 	type ChannelSettings,
 } from './modules/channel-composite.js';
 import { RoiManager } from './modules/measure/roi-manager.js';
@@ -377,6 +379,8 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	let channelPlanesKey: string | null = null;
 	// `tiffVisualizer.channels.groups`: named sets of channels for the panel.
 	let channelGroups = parseChannelGroups(settingsManager.settings.channelDefaults?.groups);
+	/** The configured groups plus those made in the panel. */
+	const allChannelGroups = (): ChannelGroupConfig[] => [...channelGroups, ...channelsPanel.groupConfigs()];
 	let channelGroupsKey = JSON.stringify(settingsManager.settings.channelDefaults?.groups ?? null);
 	let compositeRenderHandle = 0;
 	// WebGPU is tried first and the CPU compositor is the fallback and the
@@ -591,7 +595,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 		});
 	}
 
-	const channelsPanel = new ChannelsPanel({
+	const channelsPanel: ChannelsPanel = new ChannelsPanel({
 		getPlanes: () => { rebuildChannelPlanes(); return channelPlanes; },
 		getSettings: () => channelSettings,
 		setSettings: settings => {
@@ -622,7 +626,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			updateTiffPageOverlay();
 			scheduleSaveState();
 		},
-		getGroups: () => resolveChannelGroups(channelGroups, channelPlanes),
+		getGroups: (): ResolvedChannelGroup[] => resolveChannelGroups(allChannelGroups(), channelPlanes),
 		getGroupSolo: () => channelGroupSolo,
 		setGroupSolo: name => {
 			channelGroupSolo = name;
@@ -631,7 +635,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			if (name !== null) {
 				channelSolo = null;
 				// Soloing a group switches all its channels on.
-				soloShowChannels(resolveChannelGroups(channelGroups, channelPlanes).find(group => group.name === name)?.positions ?? []);
+				soloShowChannels(resolveChannelGroups(allChannelGroups(), channelPlanes).find(group => group.name === name)?.positions ?? []);
 			} else {
 				soloRestoreChannels();
 			}
@@ -724,7 +728,7 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	 */
 	function activeSolo(): number | number[] | null {
 		if (channelGroupSolo !== null) {
-			const group = resolveChannelGroups(channelGroups, channelPlanes).find(entry => entry.name === channelGroupSolo);
+			const group = resolveChannelGroups(allChannelGroups(), channelPlanes).find(entry => entry.name === channelGroupSolo);
 			if (group && group.positions.length) { return group.positions.map(position => channelPlanes[position].index); }
 		}
 		return channelSolo;

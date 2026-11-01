@@ -44,7 +44,7 @@ for (const ref of ['HEAD~1', 'HEAD', '', ':1', ':2', ':3']) {
 assert.strictEqual(resolveFormat('https://example.org/a.tif?token=image.png#preview').kind, 'tiff');
 assert.strictEqual(resolveFormat('/repo/a?#name.png').kind, 'png', 'literal filename punctuation is preserved');
 assert.strictEqual(resolveFormat('C:\\images\\a.png').kind, 'png');
-const editors = require('../package.json').contributes.customEditors;
+const editors = require('../package.json').contributes.customEditors.filter(editor => editor.viewType !== 'tiffVisualizer.xeniumViewer');
 assert.strictEqual(editors.length, 1, 'all formats share one editor registration');
 assert.strictEqual(editors[0].viewType, 'tiffVisualizer.previewEditor');
 assert.strictEqual(editors[0].priority, 'default');

@@ -102,7 +102,7 @@ and Deselect all also clear any Solo, so the result is what the button says.
 
 The section folds away by clicking its title. Each channel folds too: the
 arrow before its name collapses it to its first row (checkbox, colour, name, Solo)
-or expands it to show the sliders. Fold all and Unfold all do this for every channel (or just the listed ones, see below). Channels start folded.
+or expands it to show the sliders. Fold all and Unfold all do this for every channel (or just the filtered ones, see below). Channels start folded.
 
 ### Groups
 
@@ -114,6 +114,8 @@ above the channel list. Each row has:
 | Checkbox | Checked when every channel in the group is on, dashes when only some are. Clicking switches the whole group on (from unchecked or partly on), or off (from checked) |
 | **Solo** | Show only the channels in this group, switching on any that were off. Pressing Solo again ends the solo and switches off the ones Solo had turned on |
 | `2/3` | How many of the group's channels are on, out of those that matched. Listed members that matched nothing are named under the group |
+
+The **From selected channels** button makes a group (Group 1, Group 2, …) of the channels that are switched on (only the filtered ones while a filter is on). Double-click any group's name to rename it; the arrow beside a group opens a **Copy as JSON** button that copies the `settings.json` lines for that group, and **Copy all as JSON** at the bottom copies every group; groups made this way have a × to delete them. Groups made or renamed in the panel last until the panel is reloaded; to keep one, put it in the `groups` setting.
 
 A group Solo and a single-channel Solo (or the channel selector) replace each
 other. Soloing a channel or group, or choosing a channel with the selector,
@@ -127,7 +129,7 @@ The **Filter channels** box above the list shows only channels whose name contai
 the text (case-insensitive), updating as you type. It only hides rows: hidden
 channels stay in the composite and groups still apply to every channel. The
 section of whole-panel actions follows the filter: while one is active it is titled
-**Listed channels** and Select all, Deselect all, Auto range all, Full range all,
+**Filtered channels** and Select all, Deselect all, Auto range all, Full range all,
 Fold all and Unfold all act only on the channels in the list.
 
 Each group row also has a funnel button that limits the list to that group's
