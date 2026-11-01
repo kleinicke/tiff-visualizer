@@ -1,5 +1,7 @@
 "use strict";
 
+import { PAN_DRAG_THRESHOLD, wheelShouldZoom, wheelZoomFactor } from './zoom-interaction.js';
+
 import type { SettingsManager } from './settings-manager.js';
 
 type VsCodeApi = { postMessage: (msg: any) => any, getState: () => any, setState: (s: any) => void };
@@ -309,13 +311,8 @@ export class ZoomController {
 			return;
 		}
 
-		// Embedded IDE controls can receive the keydown before focus reaches the
-		// image. WheelEvent carries the modifier even when that keydown was missed.
-		const isScrollWheelKeyPressed = this.settingsManager.isMac ? (e.altKey || altPressed) : (e.ctrlKey || ctrlPressed);
 		const scrollToZoom = this.scrollToZoom;
-		if (!scrollToZoom && !isScrollWheelKeyPressed && !e.ctrlKey) { // pinching is reported as scroll wheel + ctrl
-			return;
-		}
+		if (!wheelShouldZoom(e, scrollToZoom, this.settingsManager.isMac, ctrlPressed, altPressed)) { return; }
 
 		e.preventDefault();
 		e.stopPropagation();
@@ -326,18 +323,9 @@ export class ZoomController {
 			this.firstZoom();
 		}
 
-		if (scrollToZoom) {
-			const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.viewport().height : 1;
-			const delta = Math.max(-100, Math.min(100, e.deltaY * unit));
-			this.updateScale((this.scale as number) * Math.exp(-delta * (e.ctrlKey ? 0.01 : 0.0025)), { x: e.clientX, y: e.clientY });
-		} else if (this.container.classList.contains('web-app') && !document.documentElement.classList.contains('jetbrains-host')) {
-			const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? this.viewport().height : 1;
-			const delta = Math.max(-100, Math.min(100, e.deltaY * unit));
-			this.updateScale((this.scale as number) * Math.exp(-delta * (e.ctrlKey ? 0.01 : 0.0025)));
-		} else {
-			const delta = e.deltaY > 0 ? 1 : -1;
-			this.updateScale((this.scale as number) * (1 - delta * this.settingsManager.constants.SCALE_PINCH_FACTOR));
-		}
+		const smooth = scrollToZoom || (this.container.classList.contains('web-app') && !document.documentElement.classList.contains('jetbrains-host'));
+		const factor = wheelZoomFactor(e, this.viewport().height, smooth, this.settingsManager.constants.SCALE_PINCH_FACTOR);
+		this.updateScale((this.scale as number) * factor, scrollToZoom ? { x: e.clientX, y: e.clientY } : undefined);
 	}
 
 	/** `tiffVisualizer.fitUpscale` (default on): Fit enlarges an image smaller than the view. */
@@ -394,7 +382,7 @@ export class ZoomController {
 		return true;
 	}
 
-	static readonly DRAG_THRESHOLD = 4;
+	static readonly DRAG_THRESHOLD = PAN_DRAG_THRESHOLD;
 
 	/** The image point at the viewport center, including scroll and drag displacement. */
 	getRelativeCenter(): { x: number; y: number } {

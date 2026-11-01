@@ -10,7 +10,12 @@ Opening an `experiment.xenium` file from a 10x Genomics Xenium output bundle ope
 - Composites a low-resolution overview immediately, then composites full-resolution tiles for the visible region as you pan and zoom.
 - Only channels that are visible (or soloed) are fetched and decoded.
 
-Controls: wheel to zoom, drag to pan, double-click or `0` to fit, `+`/`-` and arrow keys, `c` to toggle the Channels panel.
+Controls follow `tiffVisualizer.scrollToZoom`, off by default, just like the ordinary image viewer:
+
+- Off: the wheel scrolls the scene; Option (macOS) or Ctrl zooms about the view centre. Left-click selects cells; dragging does not pan.
+- On: the wheel zooms about the pointer, dragging pans, and double-click fits. A click still selects a cell without zooming.
+- Use **Scientific Image Visualizer: Toggle Scroll to Zoom** to switch the setting. Open Xenium viewers update immediately, including when the setting changes in Settings.
+- In either mode, `0` or **Fit to View** fits, `+`/`-` zoom, arrow keys pan, and `c` toggles the Channels panel. Trackpad pinch reported as Ctrl+wheel zooms in either mode.
 
 ## Current limits
 

@@ -1,6 +1,7 @@
 html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #161616; }
 #scene-root { position: fixed; inset: 0; overflow: hidden; }
-.scene-canvas { display: block; cursor: grab; outline: none; touch-action: none; }
+.scene-canvas { display: block; cursor: default; outline: none; touch-action: none; }
+.scene-canvas.scroll-to-zoom { cursor: grab; }
 .scene-canvas.dragging { cursor: grabbing; }
 .scene-hud {
 	position: absolute; left: 10px; bottom: 8px; padding: 3px 8px; border-radius: 4px; pointer-events: none;

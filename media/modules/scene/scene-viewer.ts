@@ -1,5 +1,6 @@
 "use strict";
 
+import { PAN_DRAG_THRESHOLD, wheelDeltaPixels, wheelShouldZoom, wheelZoomFactor } from '../zoom-interaction.js';
 import { compositeChannels, type ChannelPlane, type ChannelSettings } from '../channel-composite.js';
 import type { RegionSamples, TiffChannelSource } from './channel-source.js';
 import {
@@ -40,6 +41,7 @@ export interface SceneOverlay {
 
 export interface SceneViewerOptions {
 	container: HTMLElement;
+	scrollToZoom?: boolean;
 	sources: TiffChannelSource[];
 	names: string[];
 	pixelSizeUm: number;
@@ -96,7 +98,9 @@ export class SceneViewer {
 	private bytes = 0;
 	private clock = 0;
 	private cursor: { x: number; y: number } | null = null;
-	private drag: { x: number; y: number } | null = null;
+	private drag: { x: number; y: number; startX: number; startY: number; moved: boolean } | null = null;
+	private scrollToZoom = false;
+	private readonly isMac = navigator.platform.toUpperCase().includes('MAC');
 	private pressed: { x: number; y: number } | null = null;
 	private disposed = false;
 	private cameraTimer = 0;
@@ -126,10 +130,13 @@ export class SceneViewer {
 		this.canvas.addEventListener('pointerup', event => this.onPointerUp(event));
 		this.canvas.addEventListener('pointercancel', event => this.onPointerUp(event));
 		this.canvas.addEventListener('pointerleave', () => { this.cursor = null; this.updateHud(); });
-		this.canvas.addEventListener('dblclick', () => this.fit());
+		this.canvas.addEventListener('dblclick', event => {
+			if (this.scrollToZoom && event.button === 0) { event.preventDefault(); this.fit(); }
+		});
+		this.setScrollToZoom(options.scrollToZoom === true);
 		this.canvas.addEventListener('keydown', event => this.onKey(event));
 		this.resize();
-		this.camera = options.initialCamera ?? fitCamera(this.viewWidth, this.viewHeight, this.scene.width, this.scene.height);
+		this.camera = this.clamped(options.initialCamera ?? fitCamera(this.viewWidth, this.viewHeight, this.scene.width, this.scene.height));
 	}
 
 	/** Read the overview of every channel and start drawing. */
@@ -169,6 +176,20 @@ export class SceneViewer {
 	get currentCamera(): Camera { return { ...this.camera }; }
 
 	setCamera(camera: Camera): void { this.camera = this.clamped(camera); this.cameraChanged(); }
+
+	setScrollToZoom(enabled: boolean): void {
+		if (!enabled) {
+			this.drag = null;
+			this.pressed = null;
+			this.canvas.classList.remove('dragging');
+		}
+		this.scrollToZoom = enabled;
+		this.canvas.classList.toggle('scroll-to-zoom', enabled);
+		if (!enabled && this.viewWidth > 1 && this.viewHeight > 1) {
+			this.camera = this.clamped(this.camera);
+			this.cameraChanged();
+		}
+	}
 
 	fit(): void {
 		this.camera = fitCamera(this.viewWidth, this.viewHeight, this.scene.width, this.scene.height);
@@ -386,7 +407,10 @@ export class SceneViewer {
 	}
 
 	private clamped(camera: Camera): Camera {
-		return clampCamera(camera, this.viewWidth, this.viewHeight, this.scene.width, this.scene.height);
+		if (this.scrollToZoom) { return clampCamera(camera, this.viewWidth, this.viewHeight, this.scene.width, this.scene.height); }
+		// Match normal image scrolling: centre a fitting axis, clamp a larger one to its edges.
+		const clamp = (position: number, size: number, view: number) => size <= view ? (view - size) / 2 : Math.max(view - size, Math.min(0, position));
+		return { ...camera, x: clamp(camera.x, this.scene.width * camera.scale, this.viewWidth), y: clamp(camera.y, this.scene.height * camera.scale, this.viewHeight) };
 	}
 
 	private cameraChanged(): void {
@@ -403,27 +427,39 @@ export class SceneViewer {
 
 	private onWheel(event: WheelEvent): void {
 		event.preventDefault();
+		event.stopPropagation();
+		if (!wheelShouldZoom(event, this.scrollToZoom, this.isMac)) {
+			const dx = wheelDeltaPixels(event.deltaX, event.deltaMode, this.viewWidth);
+			const dy = wheelDeltaPixels(event.deltaY, event.deltaMode, this.viewHeight);
+			this.camera = this.clamped({ ...this.camera, x: this.camera.x - (event.shiftKey && !dx ? dy : dx), y: this.camera.y - (event.shiftKey && !dx ? 0 : dy) });
+			this.cameraChanged();
+			return;
+		}
+		if (!event.deltaY) { return; }
 		const rect = this.canvas.getBoundingClientRect();
-		// deltaMode 1 is lines; a pinch gesture arrives as ctrl+wheel with small deltas.
-		const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
-		this.zoomBy(Math.exp(-delta * (event.ctrlKey ? 0.01 : 0.0015)), event.clientX - rect.left, event.clientY - rect.top);
+		const x = this.scrollToZoom ? event.clientX - rect.left : this.viewWidth / 2;
+		const y = this.scrollToZoom ? event.clientY - rect.top : this.viewHeight / 2;
+		this.zoomBy(wheelZoomFactor(event, this.viewHeight, this.scrollToZoom), x, y);
 	}
 
 	private onPointerDown(event: PointerEvent): void {
 		if (event.button !== 0 && event.button !== 1) { return; }
 		this.canvas.setPointerCapture(event.pointerId);
 		this.canvas.focus();
-		this.drag = { x: event.clientX, y: event.clientY };
+		this.drag = this.scrollToZoom ? { x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, moved: false } : null;
 		this.pressed = event.button === 0 ? { x: event.clientX, y: event.clientY } : null;
-		this.canvas.classList.add('dragging');
+		this.canvas.classList.toggle('dragging', this.scrollToZoom);
 	}
 
 	private onPointerMove(event: PointerEvent): void {
 		const rect = this.canvas.getBoundingClientRect();
 		this.cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
-		if (this.drag) {
+		if (this.drag && (this.drag.moved || Math.hypot(event.clientX - this.drag.startX, event.clientY - this.drag.startY) >= PAN_DRAG_THRESHOLD)) {
+			this.drag.moved = true;
+			this.pressed = null;
 			this.camera = this.clamped({ ...this.camera, x: this.camera.x + event.clientX - this.drag.x, y: this.camera.y + event.clientY - this.drag.y });
-			this.drag = { x: event.clientX, y: event.clientY };
+			this.drag.x = event.clientX;
+			this.drag.y = event.clientY;
 			this.cameraChanged();
 		}
 		this.updateHud();
@@ -435,7 +471,7 @@ export class SceneViewer {
 		this.canvas.classList.remove('dragging');
 		const pressed = this.pressed;
 		this.pressed = null;
-		if (pressed && event.type === 'pointerup' && Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) < 4) {
+		if (pressed && event.type === 'pointerup' && Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) < PAN_DRAG_THRESHOLD) {
 			const point = this.sceneAt(event.clientX, event.clientY);
 			// Topmost overlay first: it is the one the user sees.
 			if (point) { for (let at = this.overlays.length - 1; at >= 0; at--) { if (this.overlays[at].onClick?.(point, event)) { break; } } }

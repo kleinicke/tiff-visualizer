@@ -39,10 +39,10 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 		];
 		panel.webview.options = { enableScripts: true, localResourceRoots: roots };
 		panel.webview.html = this.html(panel.webview);
-		// Groups edited in settings.json while the viewer is open show up without reopening it.
+		// Keep groups and interaction settings current in an open viewer.
 		const settingsWatcher = vscode.workspace.onDidChangeConfiguration(event => {
-			if (event.affectsConfiguration('tiffVisualizer.channels') || event.affectsConfiguration('tiffVisualizer.transcripts')) {
-				void panel.webview.postMessage({ type: 'settings', channelDefaults: this.getChannelDefaults(), transcriptGroups: this.getTranscriptGroups() });
+			if (event.affectsConfiguration('tiffVisualizer.channels') || event.affectsConfiguration('tiffVisualizer.transcripts') || event.affectsConfiguration('tiffVisualizer.scrollToZoom')) {
+				void panel.webview.postMessage({ type: 'settings', scrollToZoom: this.getScrollToZoom(), channelDefaults: this.getChannelDefaults(), transcriptGroups: this.getTranscriptGroups() });
 			}
 		});
 		panel.onDidDispose(() => settingsWatcher.dispose());
@@ -170,6 +170,10 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 		}
 	}
 
+	private getScrollToZoom(): boolean {
+		return vscode.workspace.getConfiguration('tiffVisualizer').get<boolean>('scrollToZoom', false);
+	}
+
 	private getTranscriptGroups(): Record<string, unknown> {
 		return vscode.workspace.getConfiguration('tiffVisualizer.transcripts').get<Record<string, unknown>>('groups', {});
 	}
@@ -196,6 +200,7 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 			nonce,
 		};
 		const settings = {
+			scrollToZoom: this.getScrollToZoom(),
 			channelDefaults: this.getChannelDefaults(),
 			transcriptGroups: this.getTranscriptGroups(),
 		};

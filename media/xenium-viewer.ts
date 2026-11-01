@@ -39,7 +39,7 @@ interface PersistedState {
 
 const vscode = acquireVsCodeApi();
 const root = document.getElementById('scene-root')!;
-const startup = JSON.parse(document.getElementById('xenium-settings')?.dataset.settings || '{}') as { channelDefaults?: ChannelDefaults; transcriptGroups?: unknown };
+const startup = JSON.parse(document.getElementById('xenium-settings')?.dataset.settings || '{}') as { scrollToZoom?: boolean; channelDefaults?: ChannelDefaults; transcriptGroups?: unknown };
 
 let viewer: SceneViewer | null = null;
 let pixelSizeUm = 1;
@@ -187,6 +187,7 @@ async function start(manifest: SceneManifest): Promise<void> {
 		pixelSizeUm = manifest.pixelSizeUm;
 		viewer = await SceneViewer.create({
 			container: root,
+			scrollToZoom: startup.scrollToZoom === true,
 			sources,
 			names,
 			pixelSizeUm: manifest.pixelSizeUm,
@@ -195,6 +196,8 @@ async function start(manifest: SceneManifest): Promise<void> {
 			initialCamera: restorable?.camera,
 			onCameraChange: persist,
 		});
+		// Configuration can change while the overview is being decoded.
+		viewer.setScrollToZoom(startup.scrollToZoom === true);
 
 		const colors = suggestedChannelColors(viewer.overviewPlanes, manifest.channels.map((_channel, position) => purposeTint(hintFor(position)?.purpose)), startup.channelDefaults);
 		settings = defaultChannelSettings(viewer.overviewPlanes, { colors });
@@ -262,6 +265,10 @@ window.addEventListener('message', event => {
 	if (message?.type === 'scene' && message.manifest) { void start(message.manifest as SceneManifest); }
 	else if (message?.type === 'error') { showStatus(String(message.message || 'The bundle could not be opened.'), true); }
 	else if (message?.type === 'settings') {
+		if (typeof message.scrollToZoom === 'boolean') {
+			startup.scrollToZoom = message.scrollToZoom;
+			viewer?.setScrollToZoom(message.scrollToZoom);
+		}
 		startup.channelDefaults = message.channelDefaults as ChannelDefaults;
 		startup.transcriptGroups = message.transcriptGroups;
 		if (soloGroup !== null && !allGroups().some(group => group.name === soloGroup)) { soloGroup = null; applySolo(null); viewer?.invalidate(); }
