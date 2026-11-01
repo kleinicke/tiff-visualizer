@@ -1548,8 +1548,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	// Colormap conversion state
 	let colormapConversionState: ColormapConversionState | null = null;
 
-	// Original image state (for reverting from conversions)
-	let originalImageData: ImageData | null = null;
 	let hasAppliedConversion = false;
 
 	// Decoded single-channel float data produced by "Decode Colormap to Float".
@@ -1664,9 +1662,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 	let planeSelection: { indices: Record<string, number> } = persistedState?.planeSelection && typeof persistedState.planeSelection === 'object'
 		? { indices: { ...(persistedState.planeSelection.indices || {}) } }
 		: { indices: {} };
-	/** Plane axes of the loaded image, kept for keyboard navigation. */
-	/** Axis signature currently rendered as slider rows, to avoid rebuilding them. */
-	let planeRenderedAxes = '';
 	let planeLoadInFlight = false;
 	let planeLoadPending = false;
 	let datasetManifest: DatasetManifest | null = null;
@@ -3753,10 +3748,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				finishLayerRestore(message.map || {});
 				break;
 
-			case 'setActive':
-				mouseHandler.setActive(message.value);
-				break;
-
 			case 'zoomIn':
 				zoomController.zoomIn();
 				break;
@@ -4068,15 +4059,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 				}
 				break;
 
-			case 'getZoomState':
-				// Send current zoom state back to extension
-				const zoomState = zoomController.getCurrentState();
-				vscode.postMessage({
-					type: 'zoomStateResponse',
-					state: zoomState
-				});
-				break;
-
 			case 'getComparisonState':
 				// Send current comparison state back to extension
 				const comparisonState = {
@@ -4087,13 +4069,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 					type: 'comparisonStateResponse',
 					state: comparisonState
 				});
-				break;
-
-			case 'restoreZoomState':
-				// Restore zoom state after image change
-				if (message.state) {
-					zoomController.restoreState(message.state);
-				}
 				break;
 
 			case 'restoreComparisonState':
@@ -4846,7 +4821,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			// Reset the conversion state
 			colormapConversionState = null;
 			hasAppliedConversion = false;
-			originalImageData = null;
 			decodedColormapSource = null;
 
 			// Clear converted data from processors
@@ -6207,30 +6181,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			controls: planeControlsFromSelectors(metadata),
 			loading,
 		});
-	}
-	/**
-	 * Keyboard shortcuts are assigned by SLIDER POSITION, not by axis name.
-	 *
-	 * They used to be chosen by content — arrows drove Z if a Z axis existed,
-	 * brackets drove C — which meant the same key moved a different axis from
-	 * one series to the next, and an axis with no rule (a LIF series selector,
-	 * for instance) got no shortcut at all. Binding to position instead makes
-	 * the mapping stable and visible: the hint sits at the end of its own row,
-	 * so what a key does is always readable off the slider it belongs to.
-	 *
-	 * Sliders past the fourth are mouse-only; there are no obvious further key
-	 * pairs, and inventing obscure ones would be worse than leaving them out.
-	 */
-
-
-	/** Step a CZI plane axis, wrapping like DICOM dataset navigation does. */
-	function navigatePlaneAxis(axis: { name: string, size: number, value: number } | undefined, delta: number) {
-		if (!axis || axis.size <= 1) { return; }
-		const current = Number(planeSelection.indices[axis.name] ?? axis.value) || 0;
-		const next = (current + delta + axis.size) % axis.size;
-		planeSelection.indices = { ...planeSelection.indices, [axis.name]: next };
-		axis.value = next;
-		requestPlaneReload();
 	}
 
 	/**
@@ -7680,14 +7630,6 @@ import { PyramidScene } from './modules/pyramid-scene.js';
 			sourceSize: { w: sourceWidth, h: sourceHeight },
 			targetSize: { w: targetWidth, h: targetHeight }
 		});
-	}
-
-	/**
-	 * Check if a position has been copied (local state only - for context menu)
-	 * Note: Cross-webview paste uses extension-stored state
-	 */
-	function hasPositionCopied() {
-		return copiedPositionState !== null;
 	}
 
 	/**

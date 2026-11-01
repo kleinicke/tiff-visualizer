@@ -647,19 +647,6 @@ function hueRangeWeight(hue: number, center: number): number {
 	return distance <= 30 ? 1 : distance >= 60 ? 0 : (60 - distance) / 30;
 }
 
-function configuredHueRangeWeight(hue: number, settings: Record<string, number> | undefined, fallbackCenter: number): number {
-	if (!settings || !['a', 'b', 'c', 'd'].every(name => Number.isFinite(settings[name]))) { return hueRangeWeight(hue, fallbackCenter); }
-	let a = settings.a, b = settings.b, c = settings.c, d = settings.d;
-	while (b < a) { b += 360; } while (c < b) { c += 360; } while (d < c) { d += 360; }
-	let weight = 0;
-	for (let candidate = hue - 360; candidate <= hue + 720; candidate += 360) {
-		if (candidate < a || candidate > d) { continue; }
-		weight = Math.max(weight, candidate < b ? (candidate - a) / Math.max(1e-6, b - a)
-			: candidate <= c ? 1 : (d - candidate) / Math.max(1e-6, d - c));
-	}
-	return Math.max(0, Math.min(1, weight));
-}
-
 /** One hue/saturation band, with everything that does not depend on the pixel resolved up front. */
 type PreparedHueBand = {
 	hue: number; saturationStep: number; lightnessStep: number;
@@ -733,7 +720,7 @@ function prepareHueAdjustment(adjustment: Extract<LayerAdjustment, { type: 'hue/
 	return { kind: 'hue', colorize, master: prepareHueBand(adjustment.master as Record<string, number> | undefined, 0), bands };
 }
 
-/** `configuredHueRangeWeight` for a prepared band. */
+/** Weight of a hue within the prepared band and its feathered edges. */
 function preparedBandWeight(hue: number, band: PreparedHueBand): number {
 	if (!band.configured) { return hueRangeWeight(hue, band.center); }
 	const a = band.a, b = band.b, c = band.c, d = band.d;

@@ -22,7 +22,7 @@ export type HostToViewerMessage = AutomationRequest | MessageMap<{
   requestDepthPlane: { id: string };
   clearImage: Empty; setScale: { scale: number | string };
   addLayerImages: { images: { src: string; resourceUri: string }[] };
-  layerUrisResolved: { map: Record<string, string> }; setActive: { value: boolean };
+  layerUrisResolved: { map: Record<string, string> };
   zoomIn: Empty; zoomOut: Empty; resetZoom: Empty; copyImage: Empty;
   getLayerExportCompatibility: Empty; exportLayerDocument: { format: string };
   'start-comparison': { peerUri: string }; showContextMenu: { x?: number; y?: number };
@@ -30,7 +30,7 @@ export type HostToViewerMessage = AutomationRequest | MessageMap<{
   updateSettings: { settings: ImageSettings; reason?: string; isInitialRender?: boolean };
   updateLoadStartTime: { timestamp: number }; updateImageCollectionOverlay: { data: CollectionState };
   setDataset: { manifest: DatasetManifest | null; seriesIndex?: number; coordinates?: Record<string, number> };
-  getZoomState: Empty; getComparisonState: Empty; restoreZoomState: { state: ZoomState };
+  getComparisonState: Empty;
   restoreComparisonState: { state: { peerUris: string[]; isShowingPeer: boolean } };
   switchToImage: { uri: string; resourceUri: string; formatHint?: string; loadStartTime?: number; zoomState?: ZoomState; collection?: CollectionState;
     /** The host pushes this local file on a `sourceRequest` carrying `token`. */
@@ -70,7 +70,7 @@ export type ViewerToHostMessage = MessageMap<{
   measureSaveText: { fileName: string; content: string; open?: boolean };
   measureSaveBinary: { fileName: string; bytes: number[] };
   measureSaveSidecar: { content: string }; measureRequestImport: { kind: 'imagej' | 'sidecar' };
-  log: { value: string }; zoomStateResponse: { state: ZoomState };
+  log: { value: string };
   comparisonStateResponse: { state: { peerUris: string[]; isShowingPeer: boolean } };
   measureVisibilityChanged: { isVisible: boolean }; histogramVisibilityChanged: { isVisible: boolean };
   metadataVisibilityChanged: { isVisible: boolean }; channelsVisibilityChanged: { isVisible: boolean };
