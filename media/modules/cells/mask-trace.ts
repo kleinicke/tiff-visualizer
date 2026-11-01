@@ -23,9 +23,9 @@ function twiceArea(ring: Ring): number {
 
 function distanceToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
 	const dx = bx - ax, dy = by - ay, length = dx * dx + dy * dy;
-	if (length === 0) { return Math.hypot(px - ax, py - ay); }
+	if (length === 0) { return Math.sqrt((px - ax) ** 2 + (py - ay) ** 2); }
 	const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / length));
-	return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+	return Math.sqrt((px - (ax + t * dx)) ** 2 + (py - (ay + t * dy)) ** 2);
 }
 
 function simplify(ring: Ring, epsilon: number): Ring {
@@ -53,9 +53,16 @@ function simplify(ring: Ring, epsilon: number): Ring {
 	return thinned.length < 3 ? ring : thinned;
 }
 
+function validateMask(data: MaskSamples, width: number, height: number, epsilon: number): void {
+	if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0 || width > 0xFFFFFFFF || height > 0xFFFFFFFF || data.length < width * height) {
+		throw new Error('The mask dimensions do not match its pixels.');
+	}
+	if (!Number.isFinite(epsilon) || epsilon < 0) { throw new Error('The mask tolerance must be finite and nonnegative.'); }
+}
+
 /** The TypeScript tracer: same rules and output as the Rust one. */
 export function traceMaskJs(data: MaskSamples, width: number, height: number, epsilon: number): TracedMask {
-	if (!(width > 0 && height > 0) || data.length < width * height) { throw new Error('The mask has no pixels.'); }
+	validateMask(data, width, height, epsilon);
 	const at = (x: number, y: number): number => x < 0 || y < 0 || x >= width || y >= height ? 0 : data[y * width + x];
 	const visited = new Uint8Array(width * height);
 	const best = new Map<number, { area: number; ring: Ring }>();
@@ -110,6 +117,7 @@ interface TracerExports {
 
 /** The Rust tracer, or null when the module predates it or fails; the caller then uses `traceMaskJs`. */
 export function traceMaskWasm(module: WebAssembly.Module, data: MaskSamples, width: number, height: number, epsilon: number): TracedMask | null {
+	validateMask(data, width, height, epsilon);
 	let exports: TracerExports;
 	try { exports = new WebAssembly.Instance(module, {}).exports as unknown as TracerExports; } catch { return null; }
 	if (typeof exports.mask_trace !== 'function') { return null; }

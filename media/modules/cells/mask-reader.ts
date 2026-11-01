@@ -29,6 +29,9 @@ export async function readMaskImage(bytes: ArrayBuffer): Promise<MaskImage> {
 				const target = data;
 				for (let index = 0; index < band.data.length; index++) {
 					const value = band.data[index];
+					if (!Number.isFinite(value)) { throw new Error('The mask contains non-finite values. Labels must be whole numbers, with 0 for background.'); }
+					// The region decoder uses f32, so adjacent uint32 IDs can become indistinguishable here.
+					if (value >= 2 ** 24) { throw new Error('Mask labels must be below 16,777,216 with this decoder. Relabel the mask and its matching table with smaller IDs before importing.'); }
 					if (!(value > 0)) {
 						if (value < 0) { throw new Error('The image has negative values, so it is not a label mask (whole numbers, 0 for background).'); }
 						continue;

@@ -49,7 +49,7 @@ const area = ring => ring.reduce((sum, [x0, y0], index) => { const [x1, y1] = ri
 	assert.deepStrictEqual(parseDelimited('Object\tArea\n1\t5\n').raw, [['1'], ['5']]);
 	assert.deepStrictEqual(parseDelimited('').header, []);
 
-	const { traceMaskJs, traceMask } = await load('cells/mask-trace');
+	const { traceMaskJs, traceMaskWasm } = await load('cells/mask-trace');
 	const square = maskOf(['....', '.11.', '.11.', '....']);
 	const traced = traceMaskJs(square.data, square.width, square.height, 0);
 	assert.deepStrictEqual(polygons(traced), [{ label: 1, ring: [[1, 1], [3, 1], [3, 3], [1, 3]] }]);
@@ -76,10 +76,12 @@ const area = ring => ring.reduce((sum, [x0, y0], index) => { const [x1, y1] = ri
 	assert.ok(thin.length < exact.length * 0.6, `${thin.length} vs ${exact.length}`);
 	assert.ok(Math.abs(area(thin) - area(exact)) / area(exact) < 0.03);
 
-	// The Rust tracer must agree with the TypeScript one, when the built module has it.
+	// Exercise the shipped Rust tracer directly: a fallback must not hide a stale binary.
 	const wasmPath = path.join(__dirname, '..', 'media', 'wasm', 'transcripts-wasm.wasm');
 	const module = new WebAssembly.Module(fs.readFileSync(wasmPath));
-	if (WebAssembly.Module.exports(module).some(entry => entry.name === 'mask_trace')) {
+	assert.deepStrictEqual(WebAssembly.Module.imports(module), [], 'WASM must be self-contained; use llvm-ar when building with clang');
+	assert.ok(WebAssembly.Module.exports(module).some(entry => entry.name === 'mask_trace'), 'Rebuild transcripts WASM: mask_trace is missing');
+	{
 		let seed = 12345;
 		const random = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
 		for (const [width, height, labels] of [[40, 30, 6], [64, 64, 20], [17, 90, 3]]) {
@@ -90,15 +92,26 @@ const area = ring => ring.reduce((sum, [x0, y0], index) => { const [x1, y1] = ri
 			}
 			for (const epsilon of [0, 0.8]) {
 				const js = traceMaskJs(data, width, height, epsilon);
-				const rust = traceMask(data, width, height, epsilon, module);
+				const rust = traceMaskWasm(module, data, width, height, epsilon);
+				assert.ok(rust, 'Rust tracer must run without fallback');
 				assert.deepStrictEqual(Array.from(rust.labels), Array.from(js.labels), 'same labels');
 				assert.deepStrictEqual(Array.from(rust.offsets), Array.from(js.offsets), 'same vertex counts');
 				assert.deepStrictEqual(Array.from(rust.xy), Array.from(js.xy), 'same vertices');
 			}
 		}
 		console.log('mask tracer: Rust and TypeScript agree');
-	} else {
-		console.log('mask tracer: media/wasm/transcripts-wasm.wasm predates the tracer, so only TypeScript was checked (run npm run build:wasm:transcripts)');
+	}
+
+	for (const { data, width, height } of [square, ell, touching, hole, pieces, order, maskOf(['1.', '.1']), maskOf(['...', '...']), { data: new Uint32Array([99, 16777217, 4294967295, 0, 99]).subarray(1, 4), width: 3, height: 1 }]) {
+		for (const epsilon of [0, 0.8]) {
+			const native = traceMaskWasm(module, data, width, height, epsilon);
+			assert.ok(native);
+			assert.deepStrictEqual(native, traceMaskJs(data, width, height, epsilon));
+		}
+	}
+	for (const [width, height, epsilon] of [[3, 3, 0], [1.5, 1, 0], [0, 1, 0], [1, 1, NaN], [1, 1, -1]]) {
+		assert.throws(() => traceMaskWasm(module, new Uint8Array(1), width, height, epsilon));
+		assert.throws(() => traceMaskJs(new Uint8Array(1), width, height, epsilon));
 	}
 
 	const { cellsFromTrace, maskScaleFor } = await load('cells/mask-cells');

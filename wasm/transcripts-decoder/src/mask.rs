@@ -107,7 +107,8 @@ fn distance_to_segment(p: (f64, f64), a: (f64, f64), b: (f64, f64)) -> f64 {
 fn simplify(ring: &[(i64, i64)], epsilon: f64) -> Vec<(i64, i64)> {
     if epsilon <= 0.0 || ring.len() <= 4 { return ring.to_vec(); }
     let point = |index: usize| (ring[index].0 as f64, ring[index].1 as f64);
-    let far = (1..ring.len())
+    // Reverse iteration makes equal distances keep the first corner, like the JS fallback.
+    let far = (1..ring.len()).rev()
         .max_by(|&a, &b| {
             let da = (point(a).0 - point(0).0).powi(2) + (point(a).1 - point(0).1).powi(2);
             let db = (point(b).0 - point(0).0).powi(2) + (point(b).1 - point(0).1).powi(2);
@@ -180,14 +181,14 @@ thread_local! { static TRACED: RefCell<Traced> = RefCell::new(Traced::default())
 /// # Safety
 /// `data` must be valid for `width * height * bytes` bytes.
 #[no_mangle]
-pub unsafe extern "C" fn mask_trace(data: *const u8, width: usize, height: usize, bytes: usize, epsilon: f32) -> i32 {
+pub unsafe extern "C" fn mask_trace(data: *const u8, width: usize, height: usize, bytes: usize, epsilon: f64) -> i32 {
     if !matches!(bytes, 1 | 2 | 4) || width.checked_mul(height).and_then(|n| n.checked_mul(bytes)).is_none() { return 1; }
     if width == 0 || height == 0 { return 1; }
     let samples = std::slice::from_raw_parts(data, width * height * bytes);
     let result = match bytes {
-        1 => trace(|i| u32::from(samples[i]), width, height, f64::from(epsilon)),
-        2 => trace(|i| u32::from(u16::from_le_bytes([samples[2 * i], samples[2 * i + 1]])), width, height, f64::from(epsilon)),
-        _ => trace(|i| u32::from_le_bytes([samples[4 * i], samples[4 * i + 1], samples[4 * i + 2], samples[4 * i + 3]]), width, height, f64::from(epsilon)),
+        1 => trace(|i| u32::from(samples[i]), width, height, epsilon),
+        2 => trace(|i| u32::from(u16::from_le_bytes([samples[2 * i], samples[2 * i + 1]])), width, height, epsilon),
+        _ => trace(|i| u32::from_le_bytes([samples[4 * i], samples[4 * i + 1], samples[4 * i + 2], samples[4 * i + 3]]), width, height, epsilon),
     };
     match result {
         Ok(traced) => { TRACED.with(|state| *state.borrow_mut() = traced); 0 }
@@ -307,15 +308,15 @@ mod tests {
     #[test]
     fn samples_are_read_little_endian_at_each_width() {
         let bytes16: Vec<u8> = [0u16, 258, 258, 0].iter().flat_map(|v| v.to_le_bytes()).collect();
-        let bytes32: Vec<u8> = [0u32, 70000, 70000, 0].iter().flat_map(|v| v.to_le_bytes()).collect();
+        let bytes32: Vec<u8> = [0u32, 16777217, 4294967295, 0].iter().flat_map(|v| v.to_le_bytes()).collect();
         let bytes8 = [0u8, 7, 7, 0];
         unsafe {
             assert_eq!(mask_trace(bytes8.as_ptr(), 2, 2, 1, 0.0), 0);
-            assert_eq!(TRACED.with(|s| s.borrow().labels.clone()), vec![7, 7]);
+            assert_eq!(TRACED.with(|s| s.borrow().labels.clone()), vec![7]);
             assert_eq!(mask_trace(bytes16.as_ptr(), 2, 2, 2, 0.0), 0);
-            assert_eq!(TRACED.with(|s| s.borrow().labels.clone()), vec![258, 258]);
+            assert_eq!(TRACED.with(|s| s.borrow().labels.clone()), vec![258]);
             assert_eq!(mask_trace(bytes32.as_ptr(), 2, 2, 4, 0.0), 0);
-            assert_eq!(TRACED.with(|s| s.borrow().labels.clone()), vec![70000, 70000]);
+            assert_eq!(TRACED.with(|s| s.borrow().labels.clone()), vec![16777217, 4294967295]);
             assert_eq!(mask_trace(bytes8.as_ptr(), 2, 2, 3, 0.0), 1);
             assert_eq!(mask_trace(bytes8.as_ptr(), 0, 2, 1, 0.0), 1);
         }

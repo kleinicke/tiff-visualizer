@@ -42,6 +42,7 @@
         <button type="button" class="measure-button" title="Choose a file" onclick={cells.browseSource}>Browse…</button>
         <button type="submit" class="measure-button" disabled={!text.trim()}>Add</button>
       </form>
+      <div class="measure-note">Masks keep the largest piece of each label and ignore holes. Measurements describe the simplified outlines.</div>
       {#if cells.sourceMessage}<div class="measure-note cells-source-error">{cells.sourceMessage}</div>{/if}
     </div>
   {/if}

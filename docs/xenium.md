@@ -128,6 +128,8 @@ The decoding itself is done by a small Rust/WebAssembly module (`wasm/transcript
 
 Rebuilding the module: `npm run build:wasm:transcripts` (needs a C compiler that targets wasm32 for zstd: set `CC_wasm32_unknown_unknown` to a clang, or install `zig` and the default `scripts/zig-cc-wasm32.sh` is used). `npm run build:wasm:transcripts:portable` builds without a C compiler using the pure-Rust `ruzstd`, which is about three times slower in zstd. `cargo test -p transcripts-wasm` runs the Rust tests; `test/xenium-transcripts-test.js` checks that the module returns the same points as the JavaScript reader.
 
+When rebuilding the transcripts WASM with clang on macOS, set `AR_wasm32_unknown_unknown` to `llvm-ar`; the system archiver can leave unresolved compression imports. Run `npm run test:cells-tables` after rebuilding: it requires the shipped native tracer and checks agreement with the fallback.
+
 ### Reusing it for other overlays
 
 `media/modules/cells/` and `ui/components/cells/` know nothing about Xenium. A viewer needs a `PolygonSet` (with a table row per polygon) and a `CellTable`, then:
@@ -136,7 +138,7 @@ Rebuilding the module: `npm run build:wasm:transcripts` (needs a C compiler that
 2. create a `CellsController` for the layer and table;
 3. return `controller.snapshot()` from `ChannelsPanelHost.getCells` so the Cells section appears in the Channels window.
 
-Planned: per-channel intensity inside each outline, and loaders for GeoJSON, ImageJ ROI and label masks.
+Planned: per-channel intensity inside each outline, and loaders for GeoJSON and ImageJ ROI.
 
 ## Cells on other images
 
@@ -157,6 +159,8 @@ Other segmentation outputs can be added the same way:
   are refused.
 - **CSV or TSV table** (`.csv`, `.tsv`): a per-cell table, used to colour the outlines by
   any column. It needs a column of cell ids that match the outlines.
+
+Label masks retain only the largest connected piece of each label, ignore holes, and simplify outlines. Shape measurements describe those outlines rather than the original labelled pixel count. The TIFF region decoder currently uses float32 samples, so mask IDs must be below 16,777,216; larger IDs are rejected to prevent rounding from merging distinct cells. Relabel the mask and matching table together before importing such data.
 
 The id column is `cell_id`, or the first column whose name is in
 `tiffVisualizer.cells.cellIdCol` (case-insensitive). steinbock writes its intensity tables
