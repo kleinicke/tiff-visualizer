@@ -10,8 +10,10 @@
  *     -> { index }   (genes and counts, from one pass over the gene column)
  *   txGenes { names }
  *     -> { genes: [name, points][] }   (points in scene pixels, sorted by x)
- *   source { buffer, kind, pixelSizeUm }   (one more file: a metrics table or a boundaries file)
+ *   source { buffer, kind, pixelSizeUm, idColumns? }   (one more file: a metrics table or a boundaries file, as Parquet or, for tables, CSV/TSV)
  *     -> { kind: 'table', table } | { kind: 'boundaries', table, cells }
+ *   mask { data, width, height, scale, pixelSizeUm, epsilon, wasm? }   (a label mask: unsigned integers, cell n painted n, 0 background)
+ *     -> { kind: 'boundaries', table, cells }
  *
  * The files are fetched by the page, not here: webview resources are served
  * through the page's service worker, which does not answer requests made from
@@ -26,6 +28,10 @@ import { readPlainColumns } from './modules/cells/parquet-fast.js';
 import { nativeReader } from './modules/cells/parquet-native.js';
 import type { CellTable } from './modules/cells/cell-table.js';
 import { addShapeColumns } from './modules/cells/cells-derived.js';
+import { missingIdColumnMessage, normalizeId, pickIdColumn } from './modules/cells/id-column.js';
+import { parseDelimited, typedColumn } from './modules/cells/delimited.js';
+import { cellsFromTrace } from './modules/cells/mask-cells.js';
+import { traceMask, type MaskSamples } from './modules/cells/mask-trace.js';
 import { closeTranscripts, openTranscripts, readGenes, type DecoderSetup, type RangeFile, type TranscriptHandle } from './modules/transcripts/transcript-reader.js';
 import { DecoderHost, createPool, type PoolWorker } from './modules/transcripts/transcript-pool.js';
 
@@ -98,8 +104,8 @@ function transferables(set: PolygonSet | null): ArrayBuffer[] {
  * A boundaries file with no table of its own: the cells are the distinct ids
  * in file order, and the table holds only what the outlines can tell.
  */
-async function standaloneBoundaries(file: ArrayBuffer, scale: number): Promise<{ table: CellTable; cells: PolygonSet }> {
-	const ids = toStrings((await readColumns(file, ['cell_id'])).get('cell_id') ?? []);
+async function standaloneBoundaries(file: ArrayBuffer, scale: number, idColumn: string): Promise<{ table: CellTable; cells: PolygonSet }> {
+	const ids = toStrings((await readColumns(file, [idColumn])).get(idColumn) ?? []);
 	if (ids.length === 0) { throw new Error('The boundary file has no vertices.'); }
 	let cells: PolygonSet | null = null;
 	try {
@@ -133,20 +139,45 @@ function columnBuffers(table: CellTable): ArrayBuffer[] {
 	return table.columns.map(column => (column.kind === 'continuous' ? column.values : column.codes).buffer as ArrayBuffer);
 }
 
-async function readSource(buffer: ArrayBuffer, declared: string, pixelSizeUm: number): Promise<{ result: Record<string, unknown>; buffers: ArrayBuffer[] }> {
+/** A CSV/TSV of per-cell measurements, as a table keyed by the id column. */
+function readDelimited(buffer: ArrayBuffer, declared: string, idColumns: readonly string[]): { result: Record<string, unknown>; buffers: ArrayBuffer[] } {
+	if (declared === 'boundaries') { throw new Error('A CSV or TSV file is a table of measurements, not outlines. Add it to a cell set, or add a mask image or a boundaries .parquet for outlines.'); }
+	const { header, raw } = parseDelimited(new TextDecoder('utf-8').decode(buffer));
+	if (header.length === 0) { throw new Error('The file is empty.'); }
+	const idColumn = pickIdColumn(header, idColumns);
+	if (idColumn === null) { throw new Error(missingIdColumnMessage(header)); }
+	const columns = new Map<string, ArrayLike<unknown>>();
+	header.forEach((name, index) => { columns.set(name, name === idColumn ? raw[index].map(normalizeId) : typedColumn(raw[index])); });
+	const table = buildCellTable(columns, idColumn);
+	return { result: { kind: 'table', table: { count: table.count, ids: table.ids, columns: table.columns } }, buffers: columnBuffers(table) };
+}
+
+const isParquet = (buffer: ArrayBuffer): boolean => buffer.byteLength >= 4 && new TextDecoder('latin1').decode(new Uint8Array(buffer, 0, 4)) === 'PAR1';
+
+async function readSource(buffer: ArrayBuffer, declared: string, pixelSizeUm: number, idColumns: readonly string[]): Promise<{ result: Record<string, unknown>; buffers: ArrayBuffer[] }> {
+	if (!isParquet(buffer)) { return readDelimited(buffer, declared, idColumns); }
 	const names = parquetColumnNames(buffer);
 	const kind = names.includes('vertex_x') && names.includes('vertex_y') ? 'boundaries' : 'table';
 	if (declared !== 'unknown' && declared !== kind) {
 		throw new Error(kind === 'boundaries' ? 'This file has vertex_x and vertex_y columns, so it is a boundaries file, not a table.' : 'This file has no vertex_x and vertex_y columns, so it is a table, not a boundaries file.');
 	}
-	if (!names.includes('cell_id')) { throw new Error('The file has no cell_id column.'); }
+	const idColumn = pickIdColumn(names, idColumns);
+	if (idColumn === null) { throw new Error(missingIdColumnMessage(names)); }
 	if (kind === 'table') {
-		const table = buildCellTable(await readColumns(buffer));
+		const table = buildCellTable(await readColumns(buffer), idColumn);
 		return { result: { kind, table: { count: table.count, ids: table.ids, columns: table.columns } }, buffers: columnBuffers(table) };
 	}
-	const { table, cells } = await standaloneBoundaries(buffer, 1 / pixelSizeUm);
+	const { table, cells } = await standaloneBoundaries(buffer, 1 / pixelSizeUm, idColumn);
 	addShapeColumns(table, cells, pixelSizeUm);
 	return { result: { kind, table: { count: table.count, ids: table.ids, columns: table.columns }, cells }, buffers: [...transferables(cells), ...columnBuffers(table)] };
+}
+
+/** Cells from a label mask: outlines traced (Rust when the module has the tracer) and shape columns from them. */
+function readMask(data: MaskSamples, width: number, height: number, scale: number, pixelSizeUm: number, epsilon: number): { result: Record<string, unknown>; buffers: ArrayBuffer[] } {
+	const { table, cells } = cellsFromTrace(traceMask(data, width, height, epsilon, wasmModule), scale);
+	if (table.count === 0) { throw new Error('The mask has no labelled pixels (every value is 0).'); }
+	addShapeColumns(table, cells, pixelSizeUm);
+	return { result: { kind: 'boundaries', table: { count: table.count, ids: table.ids, columns: table.columns }, cells }, buffers: [...transferables(cells), ...columnBuffers(table)] };
 }
 
 let transcripts: TranscriptHandle | null = null;
@@ -182,9 +213,17 @@ self.onmessage = async (event: MessageEvent): Promise<void> => {
 	}
 	try {
 		if (type === 'source') {
-			const { buffer, kind, pixelSizeUm, wasm } = event.data as { buffer: ArrayBuffer; kind: string; pixelSizeUm: number; wasm?: WebAssembly.Module | null };
+			const { buffer, kind, pixelSizeUm, wasm, idColumns } = event.data as { buffer: ArrayBuffer; kind: string; pixelSizeUm: number; wasm?: WebAssembly.Module | null; idColumns?: string[] };
 			wasmModule = wasm ?? null;
-			const { result, buffers } = await readSource(buffer, kind, pixelSizeUm);
+			const { result, buffers } = await readSource(buffer, kind, pixelSizeUm, idColumns ?? []);
+			(self as unknown as Worker).postMessage({ id, ok: true, ...result }, buffers);
+			return;
+		}
+		if (type === 'mask') {
+			const { data, bytes, width, height, scale, pixelSizeUm, epsilon, wasm } = event.data as { data: ArrayBuffer; bytes: 1 | 2 | 4; width: number; height: number; scale: number; pixelSizeUm: number; epsilon: number; wasm?: WebAssembly.Module | null };
+			wasmModule = wasm ?? null;
+			const samples = bytes === 1 ? new Uint8Array(data) : bytes === 2 ? new Uint16Array(data) : new Uint32Array(data);
+			const { result, buffers } = readMask(samples, width, height, scale, pixelSizeUm, epsilon);
 			(self as unknown as Worker).postMessage({ id, ok: true, ...result }, buffers);
 			return;
 		}

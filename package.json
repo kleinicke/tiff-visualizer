@@ -243,6 +243,11 @@
         "category": "Scientific Image Visualizer"
       },
       {
+        "command": "tiffVisualizer.toggleCells",
+        "title": "Toggle Cells",
+        "category": "Scientific Image Visualizer"
+      },
+      {
         "command": "tiffVisualizer.toggleScaleBar",
         "title": "Toggle Scale Bar",
         "category": "Scientific Image Visualizer"
@@ -465,18 +470,36 @@
           },
           "description": "Named groups of channels for the Channels panel, for example {\"T Cells\": [\"CD3e\", \"CD8\", \"CD4\"]}. Each value lists channel names (exact, case-insensitive) or 1-based channel numbers. A group can be switched on or off, or soloed, as a unit."
         },
-        "tiffVisualizer.cells.cellsParquet": {
+        "tiffVisualizer.cells.autoOpenPanel": {
+          "type": "string",
+          "enum": ["auto", "always", "never"],
+          "enumDescriptions": [
+            "Open the Channels panel, which ends in the Cells section, for multichannel OME-TIFF images with a micron scale, which is what fluorescence microscopy looks like. Other images never see it.",
+            "Open the Channels panel with its Cells section for every image.",
+            "Never open it by itself. Run Scientific Image Visualizer: Toggle Cells."
+          ],
+          "default": "auto",
+          "description": "When the Channels panel and its Cells section open by themselves. It opens once per file, so closing it is not undone as you step through Z or T."
+        },
+        "tiffVisualizer.cells.cellIdCol": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "examples": [["Object"]],
+          "description": "Other names for the column that identifies the cell in a cell table (.parquet, .csv or .tsv), besides cell_id, for example [\"Object\"] for the intensity tables steinbock writes. Matched without regard to case; cell_id is tried first, then these in order. The ids must match the values painted in the mask image or the cell_id of the cell set the table is added to."
+        },
+        "tiffVisualizer.cells.cellData": {
           "type": "object",
           "default": {},
           "additionalProperties": {
             "type": "object",
             "properties": {
               "path": { "type": "string", "description": "Path of the table, for example segtraq/{sample_name}/{sample_name}.segtraq_cells.parquet." },
-              "parent": { "type": "string", "description": "Name of the one cell set the table belongs to: Xenium cells, or a name from tiffVisualizer.cells.cellBoundariesParquet." }
+              "parent": { "type": "string", "description": "Name of the one cell set the table belongs to: Xenium cells, or a name from tiffVisualizer.cells.cellBoundaries." }
             },
             "required": ["path", "parent"]
           },
-          "description": "Extra cell tables for Xenium bundles, as name → {path, parent}, for example {\"xenium_segtraq\": {\"path\": \"segtraq/{sample_name}/{sample_name}.segtraq_cells.parquet\", \"parent\": \"Xenium cells\"}}. Each file needs a cell_id column. It is listed under its parent cell set only, and its columns are merged into that set by cell_id when you click Load. The parent is Xenium cells (the bundle's own cells) or a name from tiffVisualizer.cells.cellBoundariesParquet. {sample_name} is the name of the folder that holds experiment.xenium. Relative paths start at the workspace folder."
+          "description": "Extra cell tables, as name → {path, parent}, for example {\"xenium_segtraq\": {\"path\": \"segtraq/{sample_name}/{sample_name}.segtraq_cells.parquet\", \"parent\": \"Xenium cells\"}}. Each file is a .parquet, .csv or .tsv table with a cell id column (cell_id, or a name from tiffVisualizer.cells.cellIdCol). It is listed under its parent cell set only, and its columns are merged into that set by cell id when you click Load. The parent is Xenium cells (the bundle's own cells) or a name from tiffVisualizer.cells.cellBoundaries. {sample_name} is the name of the folder that holds experiment.xenium in a Xenium bundle, and the image's file name without its extension (a.ome.tif gives a) in the image viewer. Relative paths start at the workspace folder. Used by the Xenium viewer and by the Cells section of the image viewer. Replaces tiffVisualizer.cells.cellsParquet, which is still read."
         },
         "tiffVisualizer.transcripts.groups": {
           "type": "object",
@@ -496,24 +519,24 @@
           },
           "description": "Gene groups for the Transcripts section of Xenium bundles, as name → gene list, for example {\"Epithelial\": [\"EPCAM\", \"KRT8\"]}, or name → {genes, color} to choose the group colour. Groups are offered in the Transcripts section's Add group list; none is added until you pick it. Groups can also be made in the panel, from a pasted list of gene names."
         },
-        "tiffVisualizer.cells.cellBoundariesParquet": {
+        "tiffVisualizer.cells.cellBoundaries": {
           "type": "object",
           "default": {},
           "additionalProperties": { "type": "string" },
-          "description": "Extra cell segmentations for Xenium bundles, as name → path, for example {\"sam2\": \"sam2/{sample_name}/cell_boundaries.parquet\"}. Each file is a Xenium-style cell_boundaries.parquet (cell_id, vertex_x, vertex_y in microns). {sample_name} is the name of the folder that holds experiment.xenium. Relative paths start at the workspace folder. Segmentations are listed in the Cells section and loaded when you click Load."
+          "description": "Extra cell segmentations, as name → path, for example {\"sam2\": \"sam2/{sample_name}/cell_boundaries.parquet\", \"cellpose\": \"masks/{sample_name}_mask.tif\"}. Each file is a Xenium-style cell_boundaries.parquet (cell_id, vertex_x, vertex_y in microns), a .csv or .tsv of the same columns, or a .tif label mask (unsigned integers, objects numbered from 1). {sample_name} is the name of the folder that holds experiment.xenium in a Xenium bundle, and the image's file name without its extension (a.ome.tif gives a) in the image viewer. Relative paths start at the workspace folder. Used by the Xenium viewer and by the Cells section of the image viewer. Replaces tiffVisualizer.cells.cellBoundariesParquet, which is still read. Segmentations are listed in the Cells section and loaded when you click Load."
         },
-        "tiffVisualizer.cells.nucleusBoundariesParquet": {
+        "tiffVisualizer.cells.nucleusBoundaries": {
           "type": "object",
           "default": {},
           "additionalProperties": {
             "type": "object",
             "properties": {
               "path": { "type": "string", "description": "Path of the nucleus boundaries file, for example sam2/{sample_name}/nucleus_boundaries.parquet." },
-              "parent": { "type": "string", "description": "Name of the one cell set the nuclei belong to: Xenium cells, or a name from tiffVisualizer.cells.cellBoundariesParquet." }
+              "parent": { "type": "string", "description": "Name of the one cell set the nuclei belong to: Xenium cells, or a name from tiffVisualizer.cells.cellBoundaries." }
             },
             "required": ["path", "parent"]
           },
-          "description": "Extra nucleus outlines for Xenium bundles, as name → {path, parent}, for example {\"sam2_nuclei\": {\"path\": \"sam2/{sample_name}/nucleus_boundaries.parquet\", \"parent\": \"sam2\"}}. Each file is a Xenium-style nucleus_boundaries.parquet (cell_id, vertex_x, vertex_y in microns) whose cell ids match its parent. It is listed under its parent cell set only and loaded when you click Load; a cell set shows one nucleus file at a time, so loading one replaces the previous. {sample_name} is the name of the folder that holds experiment.xenium. Relative paths start at the workspace folder."
+          "description": "Extra nucleus outlines, as name → {path, parent}, for example {\"sam2_nuclei\": {\"path\": \"sam2/{sample_name}/nucleus_boundaries.parquet\", \"parent\": \"sam2\"}}. Each file is a Xenium-style nucleus_boundaries.parquet (cell_id, vertex_x, vertex_y in microns) whose cell ids match its parent. It is listed under its parent cell set only and loaded when you click Load; a cell set shows one nucleus file at a time, so loading one replaces the previous. {sample_name} is the name of the folder that holds experiment.xenium in a Xenium bundle, and the image's file name without its extension (a.ome.tif gives a) in the image viewer. Relative paths start at the workspace folder. Replaces tiffVisualizer.cells.nucleusBoundariesParquet, which is still read."
         },
         "tiffVisualizer.gpuAcceleration": {
           "type": "boolean",
@@ -557,7 +580,7 @@
     "typecheck:src": "tsc -p tsconfig.json --noEmit",
     "typecheck:media": "tsc -p media/tsconfig.json --noEmit",
     "typecheck:web": "tsc -p web/tsconfig.json --noEmit",
-    "test": "npm run test:extension-web && npm run test:sgi && npm run test:format-registry && npm run test:format-sniffer && npm run test:geotiff && npm run test:main-thread-wasm-wiring && npm run test:tiff-parallel-routing && npm run test:decode-worker-return-source && npm run test:format-defaults && npm run test:session-settings && npm run test:source-push && npm run test:pushed-source && npm run test:decode-worker-boot-race && npm run test:web-host && npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:layer-compositor-bands && npm run test:layers-panel && npm run test:control-behavior && npm run test:touch-pinch && npm run test:scroll-zoom && npm run test:fit-scale && npm run test:wasm && npm run test:strip-parallel && npm run test:tiff-detail-workers && npm run test:strip-pool-planes && npm run test:tiff-stream-decode && npm run test:tiff-result-planes && npm run test:exr-zip-pool && npm run test:hdr-pool && npm run test:psd-composite-pool && npm run test:tiff-preview-pool && npm run test:tiff-jpeg-tiled && npm run test:tiff-layout && npm run test:rust-netpbm && npm run test:rust-npy && npm run test:fast-raw && npm run test:tga-fast && npm run test:bootstrap-image && npm run test:wasm-buffer-reuse && npm run test:rust-scientific && npm run test:rust-stats && npm run test:formats && npm run test:layered-formats && npm run test:png-rgba8 && npm run test:scientific-formats && npm run test:scientific-deferred-render && npm run test:microscopy-matrix && npm run test:czi-ranged && npm run test:ranged-microscopy && npm run test:dicom-dataset && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:tiff-pages && npm run test:region-decode && npm run test:tiff-preview && npm run test:viewport-tiles && npm run test:pyramid-scene && npm run test:pyramid-picker && npm run test:remote-cog-range && npm run test:remote-tiff-source && npm run test:request-scheduler && npm run test:gdal-metadata && npm run test:nan-color && npm run test:image-renderer-channels && npm run test:active-image && npm run test:viewer-boundaries && npm run test:collection-switch && npm run test:debayer && npm run test:measurement && npm run test:rust-measure && npm run test:channels && npm run test:channel-fixtures && npm run test:xenium-scene && npm run test:xenium-cells && npm run test:xenium-transcripts",
+    "test": "npm run test:extension-web && npm run test:sgi && npm run test:format-registry && npm run test:format-sniffer && npm run test:geotiff && npm run test:main-thread-wasm-wiring && npm run test:tiff-parallel-routing && npm run test:decode-worker-return-source && npm run test:format-defaults && npm run test:session-settings && npm run test:source-push && npm run test:pushed-source && npm run test:decode-worker-boot-race && npm run test:web-host && npm run test:behavior && npm run test:visualization && npm run test:compositor && npm run test:layer-compositor-bands && npm run test:layers-panel && npm run test:control-behavior && npm run test:touch-pinch && npm run test:scroll-zoom && npm run test:fit-scale && npm run test:wasm && npm run test:strip-parallel && npm run test:tiff-detail-workers && npm run test:strip-pool-planes && npm run test:tiff-stream-decode && npm run test:tiff-result-planes && npm run test:exr-zip-pool && npm run test:hdr-pool && npm run test:psd-composite-pool && npm run test:tiff-preview-pool && npm run test:tiff-jpeg-tiled && npm run test:tiff-layout && npm run test:rust-netpbm && npm run test:rust-npy && npm run test:fast-raw && npm run test:tga-fast && npm run test:bootstrap-image && npm run test:wasm-buffer-reuse && npm run test:rust-scientific && npm run test:rust-stats && npm run test:formats && npm run test:layered-formats && npm run test:png-rgba8 && npm run test:scientific-formats && npm run test:scientific-deferred-render && npm run test:microscopy-matrix && npm run test:czi-ranged && npm run test:ranged-microscopy && npm run test:dicom-dataset && npm run test:tiff-sample-formats && npm run test:ome-tiff && npm run test:tiff-pages && npm run test:region-decode && npm run test:tiff-preview && npm run test:viewport-tiles && npm run test:pyramid-scene && npm run test:pyramid-picker && npm run test:remote-cog-range && npm run test:remote-tiff-source && npm run test:request-scheduler && npm run test:gdal-metadata && npm run test:nan-color && npm run test:image-renderer-channels && npm run test:active-image && npm run test:viewer-boundaries && npm run test:collection-switch && npm run test:debayer && npm run test:measurement && npm run test:rust-measure && npm run test:channels && npm run test:channel-fixtures && npm run test:xenium-scene && npm run test:xenium-cells && npm run test:cells-relevance && npm run test:cells-tables && npm run test:xenium-transcripts",
     "test:unit": "npm run test:compositor && npm run test:layer-compositor-bands && npm run test:layers-panel && npm run test:control-behavior",
     "test:integration": "npm run test:playwright",
     "test:format-defaults": "node test/format-defaults-test.js",
@@ -582,6 +605,8 @@
     "test:channels": "node test/channel-composite-test.js",
     "test:xenium-scene": "node test/xenium-scene-test.js && node test/xenium-interaction-test.cjs",
     "test:xenium-cells": "node test/xenium-cells-test.js",
+    "test:cells-relevance": "node test/cells-relevance-test.js",
+    "test:cells-tables": "node test/cells-tables-test.js",
     "test:xenium-transcripts": "node test/xenium-transcripts-test.js",
     "test:channel-fixtures": "node test/channel-fixtures-test.js",
     "test:compositor": "node test/layer-compositor-test.js",

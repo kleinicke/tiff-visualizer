@@ -69,10 +69,10 @@ Below the panels, a field with Browse… adds another set from a Xenium-style `c
 To list files for every sample without typing, name them in `settings.json`. `{sample_name}` is the name of the folder that holds `experiment.xenium`, and relative paths start at the workspace folder containing the bundle:
 
 ```json
-"tiffVisualizer.cells.cellBoundariesParquet": {
+"tiffVisualizer.cells.cellBoundaries": {
   "sam2": "sam2/{sample_name}/cell_boundaries.parquet"
 },
-"tiffVisualizer.cells.cellsParquet": {
+"tiffVisualizer.cells.cellData": {
   "xenium_segtraq": {
     "path": "segtraq/{sample_name}/{sample_name}.segtraq_cells.parquet",
     "parent": "Xenium cells"
@@ -82,7 +82,7 @@ To list files for every sample without typing, name them in `settings.json`. `{s
     "parent": "sam2"
   }
 },
-"tiffVisualizer.cells.nucleusBoundariesParquet": {
+"tiffVisualizer.cells.nucleusBoundaries": {
   "sam2_nuclei": {
     "path": "sam2/{sample_name}/nucleus_boundaries.parquet",
     "parent": "sam2"
@@ -90,9 +90,11 @@ To list files for every sample without typing, name them in `settings.json`. `{s
 }
 ```
 
-Each table or nucleus file names its one `parent`: `Xenium cells` (the bundle's own cells) or a name from `cellBoundariesParquet`. It is listed under that cell set only, and an entry whose parent does not exist is not shown. The bundle's own `cells.parquet` is always listed as the first table of Xenium cells.
+`cellBoundaries` and `cellData` take the same file types as the Add field: a `.parquet`, `.csv` or `.tsv`, and for `cellBoundaries` also a `.tif` label mask. (They were called `cellBoundariesParquet`, `cellsParquet` and `nucleusBoundariesParquet`; the old names are still read.)
 
-Boundaries files are listed below the cell sets and load when you click **Load**. Table files are listed in their parent's Tables list and load into that set when you click **Load** there. A file that does not exist is shown as not found. Settings are read when the bundle opens. Files outside the workspace folders are read by the extension host and sent to the page, which is slower for large files.
+Each table or nucleus file names its one `parent`: `Xenium cells` (the bundle's own cells) or a name from `cellBoundaries`. It is listed under that cell set only, and an entry whose parent does not exist is not shown. The bundle's own `cells.parquet` is always listed as the first table of Xenium cells.
+
+Boundaries files are listed below the cell sets and load automatically. Table files are listed in their parent's Tables list and load into that set automatically. A file that fails to load shows a **Retry** button, and one that does not exist is shown as not found. Settings are read when the bundle opens. Files outside the workspace folders are read by the extension host and sent to the page, which is slower for large files.
 
 ### Whole-slide performance
 
@@ -126,6 +128,8 @@ The decoding itself is done by a small Rust/WebAssembly module (`wasm/transcript
 
 Rebuilding the module: `npm run build:wasm:transcripts` (needs a C compiler that targets wasm32 for zstd: set `CC_wasm32_unknown_unknown` to a clang, or install `zig` and the default `scripts/zig-cc-wasm32.sh` is used). `npm run build:wasm:transcripts:portable` builds without a C compiler using the pure-Rust `ruzstd`, which is about three times slower in zstd. `cargo test -p transcripts-wasm` runs the Rust tests; `test/xenium-transcripts-test.js` checks that the module returns the same points as the JavaScript reader.
 
+When rebuilding the transcripts WASM with clang on macOS, set `AR_wasm32_unknown_unknown` to `llvm-ar`; the system archiver can leave unresolved compression imports. Run `npm run test:cells-tables` after rebuilding: it requires the shipped native tracer and checks agreement with the fallback.
+
 ### Reusing it for other overlays
 
 `media/modules/cells/` and `ui/components/cells/` know nothing about Xenium. A viewer needs a `PolygonSet` (with a table row per polygon) and a `CellTable`, then:
@@ -134,4 +138,54 @@ Rebuilding the module: `npm run build:wasm:transcripts` (needs a C compiler that
 2. create a `CellsController` for the layer and table;
 3. return `controller.snapshot()` from `ChannelsPanelHost.getCells` so the Cells section appears in the Channels window.
 
-Planned: per-channel intensity inside each outline, and loaders for GeoJSON, ImageJ ROI and label masks.
+Planned: per-channel intensity inside each outline, and loaders for GeoJSON and ImageJ ROI.
+
+## Cells on other images
+
+The Cells section is not limited to Xenium bundles. In the image viewer the Channels panel has no Cells section until you ask for one:
+run **Scientific Image Visualizer: Toggle Cells** from the command palette (it appends the
+section and unfolds it if folded; running it again removes the section), or let `tiffVisualizer.cells.autoOpenPanel` add it
+for images that look segmented. Fold it away with the arrow, as in the Xenium viewer. Add a Xenium-style `cell_boundaries.parquet`
+(`cell_id`, `vertex_x`, `vertex_y` in microns) by path or with Browse.
+Outlines, colouring by a table column and click selection work as in the Xenium viewer.
+
+Other segmentation outputs can be added the same way:
+
+- **TIFF label mask** (`.tif`, `.tiff`): an unsigned-integer image where each object is
+  numbered from 1 and 0 is background (Cellpose, StarDist, steinbock, ...). Each label is
+  traced into an outline (holes are ignored and only the largest connected piece of a label
+  is kept), and the object numbers become the `cell_id` of the table. The mask may be a
+  different resolution from the image if it has the same shape; masks over 150 megapixels
+  are refused.
+- **CSV or TSV table** (`.csv`, `.tsv`): a per-cell table, used to colour the outlines by
+  any column. It needs a column of cell ids that match the outlines.
+
+Label masks retain only the largest connected piece of each label, ignore holes, and simplify outlines. Shape measurements describe those outlines rather than the original labelled pixel count. The TIFF region decoder currently uses float32 samples, so mask IDs must be below 16,777,216; larger IDs are rejected to prevent rounding from merging distinct cells. Relabel the mask and matching table together before importing such data.
+
+The id column is `cell_id`, or the first column whose name is in
+`tiffVisualizer.cells.cellIdCol` (case-insensitive). steinbock writes its intensity tables
+with an `Object` column, so use:
+
+```json
+"tiffVisualizer.cells.cellIdCol": ["Object"]
+```
+
+The same three settings work for ordinary images, where `{sample_name}` is the image's file name without its extension (`a.ome.tif` gives `a`) and relative paths start at the workspace folder. Files named there are listed in the Cells section and loaded the first time the Channels panel is drawn for a file:
+
+```json
+"tiffVisualizer.cells.cellBoundaries": {
+  "cellpose": "masks/{sample_name}_mask.tif"
+},
+"tiffVisualizer.cells.cellData": {
+  "intensities": { "path": "intensities/{sample_name}.csv", "parent": "cellpose" }
+}
+```
+
+Showing the section changes nothing: the overlay is created when the first file is added,
+and each image starts without cells. Coordinates are divided by the image's pixel size,
+so the image needs a micron scale (OME-TIFF, TIFF resolution tags or Measure > Set
+scale); without one they are read as pixels and the panel says so.
+
+| Setting | Effect |
+| --- | --- |
+| `tiffVisualizer.cells.autoOpenPanel` | `auto` (default) opens the Channels panel once per file for multichannel OME-TIFF images that have a micron scale. `always` opens it for every image, `never` leaves it to the menu and command. |
