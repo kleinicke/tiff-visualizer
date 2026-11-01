@@ -2,23 +2,13 @@
 
 ## Unreleased
 
-- Rename `tiffVisualizer.cells.cellBoundariesParquet` to `cellBoundaries`, `cellsParquet` to `cellData` and `nucleusBoundariesParquet` to `nucleusBoundaries` (the old names are still read). They accept `.parquet`, `.csv`, `.tsv` and (for `cellBoundaries`) `.tif` label masks, and now apply to the image viewer as well as Xenium bundles, with `{sample_name}` set to the image's file name without its extension
-- Cells accept TIFF label masks (unsigned integers, objects numbered from 1; traced to outlines by a Rust/WebAssembly tracer with a TypeScript fallback) and CSV/TSV cell tables as well as `cell_boundaries.parquet`. `tiffVisualizer.cells.cellIdCol` lists alternative names for the cell id column (for example `["Object"]` for steinbock tables)
-- Cells for ordinary images: run Scientific Image Visualizer: Toggle Cells from the command palette (or let `cells.autoOpenPanel` decide) to add a `cell_boundaries.parquet` as an outline overlay, using the same foldable Cells section the Xenium viewer has at the end of the Channels panel. `tiffVisualizer.cells.autoOpenPanel` (`auto`, `always`, `never`) opens the Channels panel by itself; `auto` only for multichannel OME-TIFF images with a micron scale. Nothing is created until a file is added
-- Xenium transcripts: larger default and maximum dot size, more opaque dots when zoomed out, and panel genes with no transcripts are listed in Add a gene with a count of 0
-- Add a Dot opacity slider to the Xenium Transcripts section
-- Simplify Xenium transcript drawing: dots are always drawn individually at a zoom-following size (2 px minimum, 7 px maximum before Dot size), with no density-image fallback
-- Xenium transcripts load as soon as the viewer opens (no Load transcripts button). Gene and channel groups can be made from the ticked genes or channels (From selected genes / From selected channels) and renamed by double-clicking their names; the New group form is removed. Channel groups can be folded, and channel and gene groups have Copy as JSON (one group or all) for settings.json. Groups added to or edited in settings.json (`tiffVisualizer.channels.groups`, `tiffVisualizer.transcripts.groups`) appear in an open Xenium viewer without reopening it. Fix the Channels Groups section folding when a button in it was used
-- Speed up Xenium transcripts further with a Rust/WebAssembly row-group decoder (zstd, dictionary and float columns decoded straight into typed arrays; about ten times faster than the JavaScript reader, which remains the fallback; the same decoder now reads the cell table and boundary files, several times faster). Row groups are decoded in parallel by worker copies, decoded rows are kept in memory so genes added later need no decoding, and a gene's points are sorted with a radix sort
-- Add the `tiffVisualizer.scrollToZoom` setting (off by default): scroll zooms about the cursor without a modifier key, and dragging the image pans it
-- Fit now enlarges images smaller than the window to fill it (with hard pixel edges above 3x), and re-fits them when the window is resized. It used to leave them at their natural size, which made small images tiny on a large canvas. `tiffVisualizer.fitUpscale` (on by default) turns this off to restore the old behaviour
-- Add SGI RGB image support (`.rgb`, `.rgba`, `.sgi`, `.bw`), including 8/16-bit uncompressed and RLE images.
-- Improve NumPy npy and npz dataset loading and navigation
-- rearrange right click menu
-- Add `tiffVisualizer.channels.autoComposite`, `autoOpenPanel`, `colorsByName` and `colorsByNumber` settings: open OME-TIFF and ImageJ channel stacks in the composite view or the Channels panel, and tint channels by name or number
-- Add channel groups (`tiffVisualizer.channels.groups`): switch a named set of channels on or off, or solo it, from a Groups section in the Channels panel; add Deselect all and move the whole-panel actions to the top
-- Read channel names from ImageJ TIFF metadata (slice labels), so ImageJ stacks show the same channel names as their OME-TIFF equivalent
-- Fix the Channels menu entry missing on first open of multi-page OME-TIFF and ImageJ stacks, and show loading progress in the Channels panel
+- Add a Xenium viewer with image channels, cell outlines and gene transcripts.
+- Add cell overlays to ordinary images using TIFF label masks or Parquet boundaries, with CSV/TSV measurement tables.
+- Add channel and gene groups, and improve multichannel image controls.
+- Add optional scroll-to-zoom and drag-to-pan controls.
+- Improve Fit for small images and window resizing.
+- Add SGI RGB image support.
+- Improve NumPy dataset loading and navigation.
 
 ## 1.11.0 (2026-09-06)
 

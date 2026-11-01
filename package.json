@@ -2,7 +2,7 @@
   "name": "tiff-visualizer",
   "displayName": "Scientific Image Visualizer",
   "description": "Rust-based decoding and GPU rendering for more than 25 integer and floating-point image formats, with precise pixel inspection, multidimensional navigation, interactive visualization, comparison, and layer compositing.",
-  "version": "1.11.3",
+  "version": "1.11.4",
   "packageManager": "npm@11.17.0",
   "publisher": "kleinicke",
   "icon": "icon.png",
@@ -466,13 +466,22 @@
           "default": {},
           "additionalProperties": {
             "type": "array",
-            "items": { "type": ["string", "integer"] }
+            "items": {
+              "type": [
+                "string",
+                "integer"
+              ]
+            }
           },
           "description": "Named groups of channels for the Channels panel, for example {\"T Cells\": [\"CD3e\", \"CD8\", \"CD4\"]}. Each value lists channel names (exact, case-insensitive) or 1-based channel numbers. A group can be switched on or off, or soloed, as a unit."
         },
         "tiffVisualizer.cells.autoOpenPanel": {
           "type": "string",
-          "enum": ["auto", "always", "never"],
+          "enum": [
+            "auto",
+            "always",
+            "never"
+          ],
           "enumDescriptions": [
             "Open the Channels panel, which ends in the Cells section, for multichannel OME-TIFF images with a micron scale, which is what fluorescence microscopy looks like. Other images never see it.",
             "Open the Channels panel with its Cells section for every image.",
@@ -483,9 +492,15 @@
         },
         "tiffVisualizer.cells.cellIdCol": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
-          "examples": [["Object"]],
+          "examples": [
+            [
+              "Object"
+            ]
+          ],
           "description": "Other names for the column that identifies the cell in a cell table (.parquet, .csv or .tsv), besides cell_id, for example [\"Object\"] for the intensity tables steinbock writes. Matched without regard to case; cell_id is tried first, then these in order. The ids must match the values painted in the mask image or the cell_id of the cell set the table is added to."
         },
         "tiffVisualizer.cells.cellData": {
@@ -494,10 +509,19 @@
           "additionalProperties": {
             "type": "object",
             "properties": {
-              "path": { "type": "string", "description": "Path of the table, for example segtraq/{sample_name}/{sample_name}.segtraq_cells.parquet." },
-              "parent": { "type": "string", "description": "Name of the one cell set the table belongs to: Xenium cells, or a name from tiffVisualizer.cells.cellBoundaries." }
+              "path": {
+                "type": "string",
+                "description": "Path of the table, for example segtraq/{sample_name}/{sample_name}.segtraq_cells.parquet."
+              },
+              "parent": {
+                "type": "string",
+                "description": "Name of the one cell set the table belongs to: Xenium cells, or a name from tiffVisualizer.cells.cellBoundaries."
+              }
             },
-            "required": ["path", "parent"]
+            "required": [
+              "path",
+              "parent"
+            ]
           },
           "description": "Extra cell tables, as name → {path, parent}, for example {\"xenium_segtraq\": {\"path\": \"segtraq/{sample_name}/{sample_name}.segtraq_cells.parquet\", \"parent\": \"Xenium cells\"}}. Each file is a .parquet, .csv or .tsv table with a cell id column (cell_id, or a name from tiffVisualizer.cells.cellIdCol). It is listed under its parent cell set only, and its columns are merged into that set by cell id when you click Load. The parent is Xenium cells (the bundle's own cells) or a name from tiffVisualizer.cells.cellBoundaries. {sample_name} is the name of the folder that holds experiment.xenium in a Xenium bundle, and the image's file name without its extension (a.ome.tif gives a) in the image viewer. Relative paths start at the workspace folder. Used by the Xenium viewer and by the Cells section of the image viewer. Replaces tiffVisualizer.cells.cellsParquet, which is still read."
         },
@@ -506,14 +530,29 @@
           "default": {},
           "additionalProperties": {
             "oneOf": [
-              { "type": "array", "items": { "type": "string" } },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
               {
                 "type": "object",
                 "properties": {
-                  "genes": { "type": "array", "items": { "type": "string" } },
-                  "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+                  "genes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "color": {
+                    "type": "string",
+                    "pattern": "^#[0-9a-fA-F]{6}$"
+                  }
                 },
-                "required": ["genes"]
+                "required": [
+                  "genes"
+                ]
               }
             ]
           },
@@ -522,7 +561,9 @@
         "tiffVisualizer.cells.cellBoundaries": {
           "type": "object",
           "default": {},
-          "additionalProperties": { "type": "string" },
+          "additionalProperties": {
+            "type": "string"
+          },
           "description": "Extra cell segmentations, as name → path, for example {\"sam2\": \"sam2/{sample_name}/cell_boundaries.parquet\", \"cellpose\": \"masks/{sample_name}_mask.tif\"}. Each file is a Xenium-style cell_boundaries.parquet (cell_id, vertex_x, vertex_y in microns), a .csv or .tsv of the same columns, or a .tif label mask (unsigned integers, objects numbered from 1). {sample_name} is the name of the folder that holds experiment.xenium in a Xenium bundle, and the image's file name without its extension (a.ome.tif gives a) in the image viewer. Relative paths start at the workspace folder. Used by the Xenium viewer and by the Cells section of the image viewer. Replaces tiffVisualizer.cells.cellBoundariesParquet, which is still read. Segmentations are listed in the Cells section and loaded when you click Load."
         },
         "tiffVisualizer.cells.nucleusBoundaries": {
@@ -531,10 +572,19 @@
           "additionalProperties": {
             "type": "object",
             "properties": {
-              "path": { "type": "string", "description": "Path of the nucleus boundaries file, for example sam2/{sample_name}/nucleus_boundaries.parquet." },
-              "parent": { "type": "string", "description": "Name of the one cell set the nuclei belong to: Xenium cells, or a name from tiffVisualizer.cells.cellBoundaries." }
+              "path": {
+                "type": "string",
+                "description": "Path of the nucleus boundaries file, for example sam2/{sample_name}/nucleus_boundaries.parquet."
+              },
+              "parent": {
+                "type": "string",
+                "description": "Name of the one cell set the nuclei belong to: Xenium cells, or a name from tiffVisualizer.cells.cellBoundaries."
+              }
             },
-            "required": ["path", "parent"]
+            "required": [
+              "path",
+              "parent"
+            ]
           },
           "description": "Extra nucleus outlines, as name → {path, parent}, for example {\"sam2_nuclei\": {\"path\": \"sam2/{sample_name}/nucleus_boundaries.parquet\", \"parent\": \"sam2\"}}. Each file is a Xenium-style nucleus_boundaries.parquet (cell_id, vertex_x, vertex_y in microns) whose cell ids match its parent. It is listed under its parent cell set only and loaded when you click Load; a cell set shows one nucleus file at a time, so loading one replaces the previous. {sample_name} is the name of the folder that holds experiment.xenium in a Xenium bundle, and the image's file name without its extension (a.ome.tif gives a) in the image viewer. Relative paths start at the workspace folder. Replaces tiffVisualizer.cells.nucleusBoundariesParquet, which is still read."
         },
