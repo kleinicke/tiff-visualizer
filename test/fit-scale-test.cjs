@@ -67,4 +67,31 @@ assert.equal(image.style.width, '100px', 'a pyramid scene stays capped at 100% w
 ({ controller, image } = create(100, 60, ['pyramid-scene']));
 controller.updateScale('fit');
 assert.equal(image.style.width, `${100 * (580 / 60)}px`);
+// Resizing must work in both directions across the natural-size boundary.
+for (const classes of [[], ['pyramid-scene']]) {
+  viewport.clientWidth = 80;
+  viewport.clientHeight = 60;
+  ({ controller, image } = create(100, 60, classes));
+  controller.updateScale('fit');
+  viewport.clientWidth = 1000;
+  viewport.clientHeight = 600;
+  controller.refit();
+  assert.equal(image.style.width, `${100 * (580 / 60)}px`, 'growing the viewport must enable enlargement');
+  viewport.clientWidth = 80;
+  viewport.clientHeight = 60;
+  controller.refit();
+  viewport.clientWidth = 1000;
+  viewport.clientHeight = 600;
+  controller.refit();
+  assert.equal(image.style.width, `${100 * (580 / 60)}px`, 'enlargement must resume after shrinking');
+
+  ({ controller, image } = create(2, 2, classes));
+  controller.updateScale('fit');
+  assert.equal(image.style.width, '400px', 'fit must respect the manual zoom limit');
+  assert.equal(image.style.height, '400px');
+  controller.scale = 2;
+  image.style.width = '4px';
+  controller.refit();
+  assert.equal(image.style.width, '4px', 'resize must preserve a manual zoom');
+}
 console.log('fit scale ok');
