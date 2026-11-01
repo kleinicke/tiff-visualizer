@@ -26,6 +26,13 @@ and give a path or a glob, or right-click in the Explorer:
 the collection holds more than one image, and lets you jump directly or remove
 entries.
 
+Multi-plane files (such as OME-TIFF and multi-frame DICOM) stay inside the
+collection. The arrow keys continue to switch files. Their plane controls skip
+the arrow shortcut pair and use the remaining configured shortcuts, shown beside
+each control. US defaults are `[ ]`, `< >`, then `{ }`; other layouts use
+unshifted alternatives (for example `Ü +`, `, .`, and `Ö Ä` on German keyboards).
+Controls without an available shortcut remain usable with the mouse.
+
 Images are preloaded so switching is immediate rather than a fresh decode each
 time.
 

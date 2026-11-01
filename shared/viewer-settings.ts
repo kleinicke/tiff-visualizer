@@ -42,6 +42,10 @@ export interface ImageSettings extends Partial<DisplaySettings> {
   showScaleBar?: boolean;
   gpuAcceleration?: boolean;
   navigationShortcuts?: Record<string, string[]>;
+  /** Wheel zooms about the cursor without a modifier key, and dragging the image pans it. */
+  scrollToZoom?: boolean;
+  /** Fit enlarges images smaller than the view; false keeps them at their natural size. */
+  fitUpscale?: boolean;
   channelDefaults?: ChannelDefaults;
   /** Experimental: read rectangles out of large tiled TIFFs. See viewport-tiles.ts. */
   experimentalRegionDecode?: boolean;

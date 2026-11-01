@@ -30,7 +30,6 @@ export class MessageRouter {
 		this.handlers.set('get-initial-data', new InitialDataMessageHandler());
 		this.handlers.set('refresh-status', new RefreshStatusMessageHandler());
 		this.handlers.set('show-error', new ShowErrorMessageHandler());
-		this.handlers.set('zoomStateResponse', new ZoomStateResponseMessageHandler());
 		this.handlers.set('comparisonStateResponse', new ComparisonStateResponseMessageHandler());
 		this.handlers.set('toggleImage', new ToggleImageMessageHandler());
 		this.handlers.set('toggleImageReverse', new ToggleImageReverseMessageHandler());
@@ -270,13 +269,6 @@ class ShowErrorMessageHandler implements MessageHandler {
 class RefreshStatusMessageHandler implements MessageHandler {
 	handle(message: any, preview: ImagePreview): void {
 		preview.updateStatusBar();
-	}
-}
-
-class ZoomStateResponseMessageHandler implements MessageHandler {
-	handle(_message: any, _preview: ImagePreview): void {
-		// No-op: zoom state is persisted via vscode.setState in the webview and
-		// recovered from there on reload, so no extension-side storage is needed.
 	}
 }
 

@@ -194,7 +194,8 @@ assert.match(host, /type: 'showContextMenu'/, 'the Options status action should 
 assert.match(host, /getBoundingClientRect\(\)[\s\S]*?type: 'showContextMenu', x: anchor\.left, y: anchor\.top/, 'the shared image menu should originate at the Options button');
 assert.match(imagePreview, /case 'showContextMenu':[\s\S]*?MouseEvent\('contextmenu'/, 'the shared viewer should open its real context menu on host request');
 assert.match(fs.readFileSync('ui/context-menu.ts', 'utf8'), /getPropertyValue\('--context-menu-bottom-inset'\)/, 'context-menu placement should account for host UI below the image');
-assert.match(imagePreview, /container\.addEventListener\('click',[\s\S]*?e\.target !== imageElement[\s\S]*?zoomController\.zoomIn\(\)/, 'website controls must not bubble into click-to-zoom');
+assert.doesNotMatch(imagePreview, /container\.addEventListener\('click'/, 'a single click on the container must not zoom, so website controls cannot bubble into click-to-zoom');
+assert.match(zoomController, /handleDoubleClick\([\s\S]*?event\.target !== this\.imageElement/, 'double-click fit must only act on the image, not on website controls');
 assert.match(imagePreviewCss, /max-height: calc\(100vh - 16px - var\(--context-menu-bottom-inset, 0px\)\)/, 'an over-tall context menu should scroll above host UI');
 assert.match(host, /scientific-image-handoff-probe/, 'the browser host should wait for the 3D viewer before transferring a file');
 assert.match(host, /scientific-image-depth/, 'the browser host should hand the selected depth image to the ready 3D viewer');

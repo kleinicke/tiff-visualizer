@@ -140,12 +140,9 @@ body img {
     margin: 0;
 }
 
-.container.ready.zoom-in {
-	cursor: zoom-in;
-}
-
-.container.ready.zoom-out {
-	cursor: zoom-out;
+.container.ready.panning {
+	cursor: grabbing;
+	user-select: none;
 }
 
 .container .embedded-link,

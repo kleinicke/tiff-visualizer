@@ -2,7 +2,6 @@ import * as vscode from 'vscode';
 
 export class ColorPickerModeStatusBarEntry {
 	private readonly _statusBarEntry: vscode.StatusBarItem;
-	private _showModified: boolean = false;
 
 	constructor() {
 		this._statusBarEntry = vscode.window.createStatusBarItem('tiffVisualizer.colorPickerMode', vscode.StatusBarAlignment.Right, 101);
@@ -21,7 +20,6 @@ export class ColorPickerModeStatusBarEntry {
 	}
 
 	public updateMode(showModified: boolean): void {
-		this._showModified = showModified;
 		if (showModified) {
 			this._statusBarEntry.text = '$(eye) Modified';
 			this._statusBarEntry.tooltip = 'Color picker shows modified values (gamma + exposure)\nClick to show original values';

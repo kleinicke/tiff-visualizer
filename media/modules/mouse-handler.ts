@@ -18,8 +18,6 @@ export class MouseHandler {
 	// State
 	ctrlPressed: boolean;
 	altPressed: boolean;
-	isActive: boolean;
-	consumeClick: boolean;
 
 	/**
 	 * Optional provider that returns the composited float value(s) at a pixel
@@ -80,8 +78,6 @@ export class MouseHandler {
 		// State
 		this.ctrlPressed = false;
 		this.altPressed = false;
-		this.isActive = false;
-		this.consumeClick = true;
 
 		this.compositeValueProvider = null;
 
@@ -159,27 +155,6 @@ export class MouseHandler {
 		this._storedResolverGeneration++;
 	}
 
-
-	/**
-	 * Set active state
-	 */
-	setActive(value: boolean) {
-		this.isActive = value;
-		if (value) {
-			if (this.settingsManager.isMac ? this.altPressed : this.ctrlPressed) {
-				this.container.classList.remove('zoom-in');
-				this.container.classList.add('zoom-out');
-			} else {
-				this.container.classList.remove('zoom-out');
-				this.container.classList.add('zoom-in');
-			}
-		} else {
-			this.ctrlPressed = false;
-			this.altPressed = false;
-			this.container.classList.remove('zoom-out');
-			this.container.classList.remove('zoom-in');
-		}
-	}
 
 	/**
 	 * Add mouse listeners to an element
@@ -657,7 +632,6 @@ export class MouseHandler {
 			this.altPressed = true;
 		}
 
-		this._updateCursorState();
 	}
 
 	/**
@@ -673,7 +647,6 @@ export class MouseHandler {
 			this.altPressed = false;
 		}
 
-		this._updateCursorState();
 	}
 
 	/**
@@ -683,23 +656,6 @@ export class MouseHandler {
 	_handleBlur() {
 		this.ctrlPressed = false;
 		this.altPressed = false;
-		this._updateCursorState();
-	}
-
-	/**
-	 * Update cursor state based on key presses
-	 * @private
-	 */
-	_updateCursorState() {
-		if (!this.isActive) return;
-
-		if (this.settingsManager.isMac ? this.altPressed : this.ctrlPressed) {
-			this.container.classList.remove('zoom-in');
-			this.container.classList.add('zoom-out');
-		} else {
-			this.container.classList.remove('zoom-out');
-			this.container.classList.add('zoom-in');
-		}
 	}
 
 	/**

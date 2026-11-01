@@ -303,3 +303,35 @@ test('depth handoff exports the selected raw array and slice and rejects RGB', a
   await expect(overlay).not.toHaveClass(/dataset-overlay--loading/);
   expect((await depthPlane(page)).error).toContain('single-channel');
 });
+
+
+test('German defaults move plane sliders without Shift and US hints retain symbols', async ({ page }) => {
+  await page.addInitScript(() => {
+    const keyboard = new EventTarget();
+    (keyboard as any).getLayoutMap = async () => new Map([
+      ['BracketLeft', 'ü'], ['BracketRight', '+'], ['Comma', ','], ['Period', '.'],
+      ['Semicolon', 'ö'], ['Quote', 'ä'],
+    ]);
+    Object.defineProperty(navigator, 'keyboard', { value: keyboard, configurable: true });
+  });
+  await page.goto('/');
+  await page.locator('#web-file-input').setInputFiles({ name: 'planes.npz', mimeType: 'application/octet-stream', buffer: npz(researchEntries()) });
+  const overlay = page.locator('.dataset-overlay');
+  await expect.poll(() => pixel(page)).toEqual([0]);
+  await expect(overlay.locator('.dataset-axis-hint').nth(2)).toHaveText(', .');
+  await navigationKey(page, '.', 'Period');
+  await expect.poll(() => pixel(page)).toEqual([100]);
+  await navigationKey(page, ',', 'Comma');
+  await expect.poll(() => pixel(page)).toEqual([0]);
+  await page.evaluate(() => {
+    const keyboard = (navigator as any).keyboard;
+    keyboard.getLayoutMap = async () => new Map([
+      ['BracketLeft', '['], ['BracketRight', ']'], ['Comma', ','], ['Period', '.'],
+      ['Semicolon', ';'], ['Quote', "'"],
+    ]);
+    keyboard.dispatchEvent(new Event('layoutchange'));
+  });
+  await expect(overlay.locator('.dataset-axis-hint').nth(2)).toHaveText('< >');
+  await navigationKey(page, '>', 'Period', { shiftKey: true });
+  await expect.poll(() => pixel(page)).toEqual([100]);
+});

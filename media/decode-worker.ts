@@ -25,7 +25,6 @@ import initTiffWasm, { decode_sgi_fast, decode_czi_fast, decode_nd2_ranged, deco
 // retry path after the core container parser identifies it.
 import initJxlWasm, { decode_jxl_fast } from './wasm/jxl-wasm.js';
 import initCodecWasm, { czi_layout as codec_czi_layout, czi_region_plan as codec_czi_region_plan, decode_czi_region as codec_decode_czi_region } from './wasm/codec-wasm.js';
-import { buildTagsFromGeotiffImage } from './modules/tiff-tag-utils.js';
 import { decodeSgiWithWasm, decodeCziWithWasm, decodeCziRegionWithWasm, decodeRangedWithWasm, decodeLifWithWasm, decodeNd2WithWasm, decodeSdtWithWasm, decodeDicomWithWasm, decodeFitsWithWasm, decodeJxlWithWasm, decodeNetcdfWithWasm, decodeNpyWithWasm, decodeNumpySelectedWithWasm, decodePfmWithWasm, decodePpmWithWasm } from './modules/wasm-decoders.js';
 import { MIN_PARALLEL_TIFF_PIXELS, MIN_PARALLEL_TIFF_STRIPS, shouldUseParallelTiffPlan } from './modules/tiff-parallel-policy.js';
 import { chooseOpenLevel, parsePageDirectory } from './modules/tiff-pages.js';
@@ -37,15 +36,6 @@ import { chooseOpenLevel, parsePageDirectory } from './modules/tiff-pages.js';
 // `onmessage` directly). Adding the `webworker` lib would conflict with
 // `dom`, so `self` is pragmatically typed as `any` instead.
 declare const self: any;
-// Referenced only by dead compatibility helpers retained temporarily for
-// source-level decoder tests. Production routing never calls them; fallbacks
-// are loaded by the webview after a Rust failure.
-declare const WorkerGeoTIFF: any;
-declare const UPNG: any;
-
-// Parser-only instances: the constructors just assign fields, and the
-// _parse* methods used here touch no DOM or vscode APIs.
-
 let tiffWasmReady = false;
 let tiffWasmInitPromise: Promise<void> | null = null;
 const TIFF_WASM_INIT_TIMEOUT_MS = 3000;
@@ -315,87 +305,10 @@ function decodeTiffWasm(buffer: ArrayBuffer, pageIndex = 0, levelHint?: TiffLeve
 	};
 }
 
-/**
- * Decode TIFF variants unsupported by the Rust decoder without blocking the
- * webview thread.
- */
-async function decodeTiffGeotiff(buffer: ArrayBuffer, wasmError: string, pageIndex = 0) {
-	const timings = [];
-	let phaseStart = performance.now();
-	const tiff = await WorkerGeoTIFF.fromArrayBuffer(buffer);
-	let now = performance.now();
-	timings.push({ name: 'decode-geotiff-open', durationMs: now - phaseStart });
-
-	phaseStart = now;
-	const pageCount = await tiff.getImageCount();
-	const image = await tiff.getImage(pageIndex);
-	const firstImage = pageIndex === 0 ? image : await tiff.getImage(0);
-	const firstDescription = String(firstImage?.fileDirectory?.ImageDescription || '').trim();
-	const omeXml = /<(?:[\w.-]+:)?OME\b/i.test(firstDescription) ? firstDescription : undefined;
-	now = performance.now();
-	timings.push({ name: 'decode-geotiff-ifd', durationMs: now - phaseStart });
-
-	const width = image.getWidth();
-	const height = image.getHeight();
-	const samplesPerPixel = image.getSamplesPerPixel();
-	const rawBitsPerSample = image.getBitsPerSample();
-	const rawSampleFormat = image.getSampleFormat();
-	const bitsPerSample = Array.isArray(rawBitsPerSample) ? rawBitsPerSample[0] : rawBitsPerSample;
-	const sampleFormat = Array.isArray(rawSampleFormat) ? rawSampleFormat[0] : rawSampleFormat;
-	phaseStart = performance.now();
-	const decodedRasters = await image.readRasters();
-	now = performance.now();
-	timings.push({ name: 'decode-geotiff-rasters', durationMs: now - phaseStart });
-	const fileDirectory = image.fileDirectory || {};
-
-	let data: Float32Array;
-	let rasters: Float32Array[] | any[];
-	if (samplesPerPixel === 1) {
-		phaseStart = performance.now();
-		data = new Float32Array(decodedRasters[0]);
-		rasters = [data];
-		now = performance.now();
-		timings.push({ name: 'decode-geotiff-copy', durationMs: now - phaseStart });
-	} else {
-		phaseStart = performance.now();
-		const pixelCount = width * height;
-		data = new Float32Array(pixelCount * samplesPerPixel);
-		for (let i = 0; i < pixelCount; i++) {
-			for (let c = 0; c < samplesPerPixel; c++) {
-				data[i * samplesPerPixel + c] = decodedRasters[c][i];
-			}
-		}
-		rasters = decodedRasters;
-		now = performance.now();
-		timings.push({ name: 'decode-geotiff-interleave', durationMs: now - phaseStart });
-	}
-
-	return {
-		pageIndex,
-		pageCount,
-		width,
-		height,
-		channels: samplesPerPixel,
-		bitsPerSample,
-		sampleFormat,
-		compression: fileDirectory.Compression || 1,
-		predictor: fileDirectory.Predictor || 1,
-		photometricInterpretation: fileDirectory.PhotometricInterpretation || 1,
-		planarConfiguration: fileDirectory.PlanarConfiguration || 1,
-		data,
-		rasters,
-		allTagsJson: JSON.stringify(buildTagsFromGeotiffImage(image)),
-		omeXml,
-		decodedWith: 'geotiff.js (worker)',
-		wasmFallbackReason: wasmError,
-		decodeTimings: timings,
-	};
-}
-
 async function decodeTiff(buffer: ArrayBuffer, pageIndex = 0, levelHint?: TiffLevelHint) {
 	if (tiffWasmInitPromise) {
 		// WASM is preferred, but a slow or wedged initialization must never
-		// prevent the worker's GeoTIFF compatibility decoder from running.
+		// delay handing unsupported inputs back to the webview fallback.
 		await withTimeout(tiffWasmInitPromise, TIFF_WASM_INIT_TIMEOUT_MS, 'TIFF WASM init wait timed out')
 			.catch(error => console.warn('[DecodeWorker]', error));
 	}
@@ -549,20 +462,6 @@ function decodeExrWasm(buffer: ArrayBuffer) {
 	};
 }
 
-function decodeExrParseExr(buffer: ArrayBuffer, wasmError = '') {
-	const phaseStart = performance.now();
-	// FloatType (1015): decoded Float32Array values, matching exr-processor.
-	// @ts-ignore — parseExr is attached to the (shimmed) window by parse-exr.js
-	const result = globalThis.parseExr(buffer, 1015);
-	result.decodedWith = 'parse-exr.js (worker)';
-	result.flipY = true;
-	if (wasmError) {
-		result.wasmFallbackReason = wasmError;
-	}
-	result.decodeTimings = [{ name: 'decode-exr-parse-exr', durationMs: performance.now() - phaseStart }];
-	return result;
-}
-
 async function decodeExr(buffer: ArrayBuffer) {
 	if (tiffWasmInitPromise) {
 		await withTimeout(tiffWasmInitPromise, TIFF_WASM_INIT_TIMEOUT_MS, 'WASM init wait timed out')
@@ -709,33 +608,6 @@ function decodePng16Wasm(buffer: ArrayBuffer) {
 		decodedWith: 'rust-png-wasm (worker)',
 		decodeTimings: timings
 	};
-}
-
-function decodePng16Upng(buffer: ArrayBuffer, wasmError = '') {
-	const timings = [];
-	let phaseStart = performance.now();
-	const png = UPNG.decode(buffer);
-	let now = performance.now();
-	timings.push({ name: 'decode-png16-upng', durationMs: now - phaseStart });
-	if (png.depth === 16 && png.data) {
-		phaseStart = now;
-		const uint8Data = new Uint8Array(png.data);
-		const uint16Data = new Uint16Array(uint8Data.length / 2);
-		let src = 0;
-		for (let i = 0; i < uint16Data.length; i++, src += 2) {
-			uint16Data[i] = (uint8Data[src] << 8) | uint8Data[src + 1];
-		}
-		png.decodedData = uint16Data;
-		png.data = null;
-		now = performance.now();
-		timings.push({ name: 'decode-png16-byte-swap', durationMs: now - phaseStart });
-	}
-	png.decodeTimings = timings;
-	png.decodedWith = 'upng-js (worker)';
-	if (wasmError) {
-		png.wasmFallbackReason = wasmError;
-	}
-	return png;
 }
 
 async function decodePng16(buffer: ArrayBuffer) {

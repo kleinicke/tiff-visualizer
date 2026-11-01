@@ -17,8 +17,8 @@ import { getOutputChannel } from '../extension';
 
 // Stored position state for cross-webview paste position feature
 export interface CopiedPositionState {
-	relativeX: number;  // 0-1, center point as fraction of image width
-	relativeY: number;  // 0-1, center point as fraction of image height
+	relativeX: number;  // Viewport center as a fraction of image width; may be outside 0-1.
+	relativeY: number;  // Viewport center as a fraction of image height; may be outside 0-1.
 	scale: number | 'fit';
 	sourceWidth: number;
 	sourceHeight: number;
