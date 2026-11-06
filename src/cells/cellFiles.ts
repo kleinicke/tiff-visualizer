@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { Utils } from 'vscode-uri';
 import type { CellSourceSpec } from '../../media/modules/scene/xenium-manifest';
-import { expandSampleName, isAbsolutePath, sourceNameFromPath } from '../../shared/cell-paths';
+import { expandSampleName, extractSampleName, isAbsolutePath, sourceNameFromPath } from '../../shared/cell-paths';
 
 /**
  * Locating cell files for the Cells panel, shared by the Xenium viewer and the
@@ -9,9 +9,26 @@ import { expandSampleName, isAbsolutePath, sourceNameFromPath } from '../../shar
  * name is `{sample_name}` in paths, and relative paths start at its workspace folder.
  */
 
-/** `{sample_name}` for an image: its file name without the extension (and without `.ome`). */
+const warned = new Set<string>();
+
+/**
+ * `{sample_name}` for a folder or file name: the name itself, or the part of it
+ * picked out by `tiffVisualizer.cells.sampleNamePattern`. A pattern that does
+ * not work is reported once and the whole name is used.
+ */
+export function sampleNameFor(rawName: string): string {
+	const pattern = vscode.workspace.getConfiguration('tiffVisualizer.cells').get<string>('sampleNamePattern', '');
+	const { name, warning } = extractSampleName(pattern, rawName);
+	if (warning && !warned.has(warning)) {
+		warned.add(warning);
+		void vscode.window.showWarningMessage(warning);
+	}
+	return name;
+}
+
+/** `{sample_name}` for an image: its file name without the extension (and without `.ome`), through the pattern. */
 export function imageSampleName(image: vscode.Uri): string {
-	return Utils.basename(image).replace(/\.[^.]+$/, '').replace(/\.ome$/i, '');
+	return sampleNameFor(Utils.basename(image).replace(/\.[^.]+$/, '').replace(/\.ome$/i, ''));
 }
 
 /** A cell file named in settings, with where it was found (if it exists). */
@@ -49,7 +66,7 @@ export function baseFolder(sampleFolder: vscode.Uri): vscode.Uri {
 }
 
 /** Turn a typed or configured path (with `{sample_name}`) into a location. */
-export function locate(text: string, sampleFolder: vscode.Uri, sampleName: string = Utils.basename(sampleFolder)): vscode.Uri {
+export function locate(text: string, sampleFolder: vscode.Uri, sampleName: string = sampleNameFor(Utils.basename(sampleFolder))): vscode.Uri {
 	const expanded = expandSampleName(text.trim(), sampleName);
 	if (isAbsolutePath(expanded)) { return sampleFolder.scheme === 'file' ? vscode.Uri.file(expanded) : sampleFolder.with({ path: expanded }); }
 	return Utils.joinPath(baseFolder(sampleFolder), ...expanded.split(/[\\/]/).filter(Boolean));
@@ -72,7 +89,7 @@ export async function specFor(
 }
 
 /** Reply to the webview's request to add a cell file: `text` is a typed path, null opens the file dialog. */
-export async function answerCellRequest(webview: vscode.Webview, requestId: unknown, sampleFolder: vscode.Uri, roots: readonly vscode.Uri[], text: string | null, sampleName: string = Utils.basename(sampleFolder)): Promise<void> {
+export async function answerCellRequest(webview: vscode.Webview, requestId: unknown, sampleFolder: vscode.Uri, roots: readonly vscode.Uri[], text: string | null, sampleName: string = sampleNameFor(Utils.basename(sampleFolder))): Promise<void> {
 	try {
 		let uri: vscode.Uri | undefined;
 		if (text === null) {
