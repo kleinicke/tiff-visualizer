@@ -5,7 +5,7 @@ import {
 	buildSceneManifest, discoverCellFiles, discoverChannelFiles, expandSampleName, folderOf, parseExperiment, parseGenePanel,
 } from '../../media/modules/scene/xenium-manifest';
 import { escapeAttribute, getNonce } from '../util/dom';
-import { answerCellRequest, configuredSources, specFor, type ConfiguredSource } from '../cells/cellFiles';
+import { answerCellRequest, configuredSources, sampleNameFor, specFor, type ConfiguredSource } from '../cells/cellFiles';
 import { getCellIdColumns } from '../cells/cellIdColumns';
 
 /**
@@ -31,7 +31,7 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 		const bundleFolder = Utils.dirname(document.uri).with({ query: '', fragment: '' });
 		// Files named in the settings are served to the webview directly, so their
 		// folders must be among its resource roots; roots cannot change later.
-		const configured = await configuredSources(bundleFolder, Utils.basename(bundleFolder));
+		const configured = await configuredSources(bundleFolder, sampleNameFor(Utils.basename(bundleFolder)));
 		const roots = [
 			bundleFolder, this.extensionRoot,
 			...(vscode.workspace.workspaceFolders ?? []).map(folder => folder.uri),

@@ -6,7 +6,7 @@
   const requested = new Set<string>();
   $effect(() => {
     for (const row of cells.pending) {
-      if (row.state === 'available' && !requested.has(row.id)) { requested.add(row.id); cells.loadSource(row.id); }
+      if (row.state === 'available' && !requested.has(row.id)) { requested.add(row.id); const id = row.id; queueMicrotask(() => cells.loadSource(id)); }
     }
   });
   function add(event: Event) {
