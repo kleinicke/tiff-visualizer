@@ -132,6 +132,8 @@ export class RoiOverlay {
 	private brushRadius = 8;
 	private wandTolerance: number | null = null;
 	private showScaleBar = true;
+	/** `tiffVisualizer.scaleBar.anchorToImage`: the bar follows the image instead of the viewer. */
+	private anchorScaleBarToImage = false;
 	/**
 	 * Keep the scale bar on screen while the measurement panel is closed.
 	 *
@@ -255,7 +257,15 @@ export class RoiOverlay {
 
 	getShowScaleBar(): boolean { return this.showScaleBar; }
 
-	/** Null keeps the automatic lower-left placement; a value is viewport-relative. */
+	setAnchorScaleBarToImage(anchor: boolean): void {
+		if (this.anchorScaleBarToImage === anchor) { return; }
+		this.anchorScaleBarToImage = anchor;
+		this.scheduleRedraw();
+	}
+
+	getAnchorScaleBarToImage(): boolean { return this.anchorScaleBarToImage; }
+
+	/** Null keeps the automatic lower-left placement; a value is viewport-relative, or image-relative when anchored to the image. */
 	getScaleBarPosition(): ScaleBarPosition | null { return this.scaleBar.getPosition(); }
 
 	setScaleBarPosition(position: ScaleBarPosition | null): void { this.scaleBar.setPosition(position); }
@@ -882,6 +892,8 @@ export class RoiOverlay {
 			visibleWidth: Math.min(rect.width, window.innerWidth) / this.pixelScale(),
 			pixelScale: this.pixelScale(),
 			calibration: this.host.getCalibration(),
+			imageRect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+			anchorToImage: this.anchorScaleBarToImage,
 		});
 	}
 

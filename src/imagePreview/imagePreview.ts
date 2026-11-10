@@ -29,6 +29,7 @@ interface WebviewImageSettings extends ImageSettings {
 	gpuAcceleration: boolean;
 	scrollToZoom: boolean;
 	fitUpscale: boolean;
+	scaleBarAnchorToImage: boolean;
 	navigationShortcuts: Record<string, string[]>;
 	channelDefaults: ChannelDefaults;
 	cellsAutoOpenPanel: 'auto' | 'always' | 'never';
@@ -232,6 +233,7 @@ export class ImagePreview extends MediaPreview {
 				gpuAcceleration: this.getGpuAccelerationEnabled(),
 				scrollToZoom: this.getScrollToZoom(),
 				fitUpscale: this.getFitUpscale(),
+				scaleBarAnchorToImage: this.getScaleBarAnchorToImage(),
 				channelDefaults: this.getChannelDefaults(),
 				cellsAutoOpenPanel: this.getCellsAutoOpenPanel(),
 				cellIdCols: getCellIdColumns(),
@@ -258,6 +260,7 @@ export class ImagePreview extends MediaPreview {
 				|| e.affectsConfiguration('tiffVisualizer.experimentalRegionDecode')
 				|| e.affectsConfiguration('tiffVisualizer.scrollToZoom')
 				|| e.affectsConfiguration('tiffVisualizer.fitUpscale')
+				|| e.affectsConfiguration('tiffVisualizer.scaleBar.anchorToImage')
 				|| e.affectsConfiguration('tiffVisualizer.channels')
 				|| e.affectsConfiguration('tiffVisualizer.cells.autoOpenPanel')
 				|| e.affectsConfiguration('tiffVisualizer.cells.cellIdCol')) {
@@ -420,6 +423,7 @@ export class ImagePreview extends MediaPreview {
 			gpuAcceleration: this.getGpuAccelerationEnabled(),
 			scrollToZoom: this.getScrollToZoom(),
 			fitUpscale: this.getFitUpscale(),
+				scaleBarAnchorToImage: this.getScaleBarAnchorToImage(),
 			channelDefaults: this.getChannelDefaults(),
 			cellsAutoOpenPanel: this.getCellsAutoOpenPanel(),
 			cellIdCols: getCellIdColumns(),
@@ -434,6 +438,10 @@ export class ImagePreview extends MediaPreview {
 		return vscode.workspace
 			.getConfiguration('tiffVisualizer')
 			.get<boolean>('gpuAcceleration', true);
+	}
+
+	private getScaleBarAnchorToImage(): boolean {
+		return vscode.workspace.getConfiguration('tiffVisualizer.scaleBar').get<boolean>('anchorToImage', false);
 	}
 
 	private getFitUpscale(): boolean {
@@ -1305,6 +1313,7 @@ export class ImagePreview extends MediaPreview {
 			gpuAcceleration: this.getGpuAccelerationEnabled(),
 			scrollToZoom: this.getScrollToZoom(),
 			fitUpscale: this.getFitUpscale(),
+				scaleBarAnchorToImage: this.getScaleBarAnchorToImage(),
 			channelDefaults: this.getChannelDefaults(),
 			cellsAutoOpenPanel: this.getCellsAutoOpenPanel(),
 			cellIdCols: getCellIdColumns()

@@ -901,6 +901,7 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 	if (typeof settingsManager.settings.showScaleBar === 'boolean') {
 		roiOverlay.setShowScaleBar(settingsManager.settings.showScaleBar);
 	}
+	roiOverlay.setAnchorScaleBarToImage(settingsManager.settings.scaleBarAnchorToImage === true);
 
 	function invalidatePyramidViewport(): void {
 		_pyramidViewGeneration++;
@@ -3914,6 +3915,7 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 				if (typeof message.settings?.showScaleBar === 'boolean') {
 					roiOverlay.setShowScaleBar(message.settings.showScaleBar);
 				}
+				roiOverlay.setAnchorScaleBarToImage(settingsManager.settings.scaleBarAnchorToImage === true);
 				// A hole over the editor background is nearly indistinguishable
 				// from a black pixel in a dark theme, which would make the
 				// transparent choice look like it did nothing. The checkerboard

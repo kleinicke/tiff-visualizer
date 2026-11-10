@@ -425,6 +425,11 @@
           "default": false,
           "description": "Zoom with the mouse wheel or trackpad scroll about the cursor without holding a modifier key, and pan by dragging the image. Single clicks do not zoom; double-click fits the image. Off by default: the wheel scrolls the image and Option (macOS) or Ctrl zooms."
         },
+        "tiffVisualizer.scaleBar.anchorToImage": {
+          "type": "boolean",
+          "default": false,
+          "description": "Start the scale bar at the bottom left of the image instead of the bottom left of the viewer, kept inside the viewer. A bar you move is pinned to that place in the image and can leave the screen as you pan; drop it on the image's bottom-left corner to snap it back. With this off it stays at that place in the viewer."
+        },
         "tiffVisualizer.fitUpscale": {
           "type": "boolean",
           "default": true,

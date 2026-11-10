@@ -231,6 +231,13 @@ length is always a round number (1, 2 or 5 × a power of ten) in the calibrated
 unit and it re-picks itself as you zoom, so it never has to be read off a
 fractional value. An uncalibrated image draws nothing.
 
+Set `tiffVisualizer.scaleBar.anchorToImage` to anchor the bar to the *image* instead. It
+starts at the image's bottom left, kept inside the viewer. A bar you drag elsewhere is pinned
+to that place in the image and moves off screen with it as you pan and zoom; drop it back on
+the image's bottom-left corner and it snaps into place and is kept on screen again. The
+setting is off by default and applies to image previews; the Xenium viewer keeps the bar in
+the viewer.
+
 **Toggle Scale Bar** (command palette) turns it off and on; the *Show scale bar*
 checkbox under **Overlay** is the same switch.
 
