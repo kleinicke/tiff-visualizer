@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Fix panning that kept following the cursor after the mouse button was released outside the window.
+- Fix panning that kept following the cursor after the mouse button was released outside the window, and keep a drag-pan going when the cursor leaves the window in the image viewer, as in the Xenium viewer.
 - Add a Xenium viewer with image channels, cell outlines and gene transcripts.
 - Add cell overlays to ordinary images using TIFF label masks or Parquet boundaries, with CSV/TSV measurement tables.
 - Add channel and gene groups, and improve multichannel image controls.

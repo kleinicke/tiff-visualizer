@@ -217,3 +217,22 @@ test('drag-pan ends when the release is missed', async ({ page }) => {
   expect(await page.evaluate(() => document.body.classList.contains('panning'))).toBe(false);
   await page.mouse.up();
 });
+
+// The webview does not receive pointer events once the cursor leaves the window unless the pointer is
+// captured, so the pan holds it for as long as the button is down and lets go of it afterwards.
+test('drag-pan captures the pointer until the button is released', async ({ page }) => {
+  await open(page, true);
+  await scale(page, 4);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.captures = { got: 0, lost: 0 };
+    document.body.addEventListener('gotpointercapture', () => w.captures.got++);
+    document.body.addEventListener('lostpointercapture', () => w.captures.lost++);
+  });
+  const captures = () => page.evaluate(() => (window as any).captures);
+  await page.mouse.move(600, 350); await page.mouse.down(); await page.mouse.move(640, 380, { steps: 6 });
+  expect(await captures()).toEqual({ got: 1, lost: 0 });
+  await page.mouse.up();
+  expect(await captures()).toEqual({ got: 1, lost: 1 });
+  expect(await page.evaluate(() => document.body.classList.contains('panning'))).toBe(false);
+});

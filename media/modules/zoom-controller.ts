@@ -352,14 +352,20 @@ export class ZoomController {
 		this.updateScale('fit');
 	}
 
-	/** Start panning by dragging, including at fit. */
-	beginPan(event: MouseEvent): boolean {
+	/**
+	 * Start panning by dragging, including at fit. `pointerId` is the pointer of the
+	 * press (a mousedown does not say which it was): capturing it keeps the drag going
+	 * when the cursor leaves the window, where the webview would otherwise stop
+	 * receiving events.
+	 */
+	beginPan(event: MouseEvent, pointerId: number | null = null): boolean {
 		if (!this.scrollToZoom || !this.hasLoadedImage || (event.button !== 0 && event.button !== 1)) { return false; }
 		this.endPan?.();
 		event.preventDefault();
 		let last = { x: event.clientX, y: event.clientY };
 		let moved = false;
 		this.container.classList.add('panning');
+		let capturedId: number | null = null;
 		const move = (e: MouseEvent) => {
 			// A release outside the webview is never delivered to it. The next move
 			// then arrives with no button down, which is the only sign the drag ended.
@@ -374,11 +380,23 @@ export class ZoomController {
 			window.removeEventListener('mousemove', move, true);
 			window.removeEventListener('mouseup', up, true);
 			window.removeEventListener('blur', up);
+			if (capturedId !== null) {
+				this.container.removeEventListener('lostpointercapture', up);
+				if (this.container.hasPointerCapture(capturedId)) { this.container.releasePointerCapture(capturedId); }
+			}
 			this.endPan = null;
 			this.container.classList.remove('panning');
 			if (moved) { this.saveState(); }
 		};
 		this.endPan = up;
+		// As in the Xenium scene, capture ends the drag if it is taken away.
+		if (pointerId !== null) {
+			try {
+				this.container.setPointerCapture(pointerId);
+				capturedId = pointerId;
+				this.container.addEventListener('lostpointercapture', up);
+			} catch { /* the pointer is no longer active: fall back to window events */ }
+		}
 		window.addEventListener('mousemove', move, true);
 		window.addEventListener('mouseup', up, true);
 		window.addEventListener('blur', up);
