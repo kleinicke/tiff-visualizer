@@ -61,6 +61,34 @@ test('Xenium scale bar follows the zoom, hides, moves and stays clear of the rea
   await expect(handle).toBeVisible();
 });
 
+test('Channels window stops above the scale bar at any window height', async ({ page }) => {
+  await open(page, false);
+  await page.addStyleTag({ content: readFileSync(path.join(root, 'media/imagePreview.css'), 'utf8') });
+  // The structure of ui/components/Channels.svelte with a long channel list and tall Cells and Transcripts sections.
+  await page.evaluate(() => {
+    const rows = (count: number, height: number) => Array.from({ length: count }, () => `<div style="height:${height}px;flex:none">row</div>`).join('');
+    document.body.insertAdjacentHTML('beforeend', `<div class="channels-panel"><div class="channels-header">Channels</div>`
+      + `<details class="channels-global" open><summary class="channels-section-title">All channels (41)</summary><div class="channels-toolbar" style="height:60px"></div></details>`
+      + `<div class="channels-body">${rows(41, 46)}</div>`
+      + `<section class="cells-section"><div class="cells-header">Cells</div><div class="cells-body">${rows(30, 30)}</div></section>`
+      + `<section class="cells-section transcripts-section"><div class="cells-header">Transcripts</div><div class="cells-body">${rows(30, 30)}</div></section></div>`);
+  });
+  const handle = page.locator('.measure-scale-bar-handle');
+  for (const height of [600, 800, 1000]) {
+    await page.setViewportSize({ width: 800, height });
+    await expect.poll(async () => (await handle.boundingBox())?.y ?? 0).toBeGreaterThan(height - 100);
+    const bar = (await handle.boundingBox())!;
+    const panel = (await page.locator('.channels-panel').boundingBox())!;
+    expect(panel.y + panel.height, `panel bottom at ${height}px`).toBeLessThanOrEqual(bar.y);
+    const spill = await page.evaluate(() => {
+      const box = document.querySelector('.channels-panel')!.getBoundingClientRect();
+      return Array.from(document.querySelector('.channels-panel')!.children).filter(child => child.getBoundingClientRect().bottom > box.bottom + 0.5).length;
+    });
+    expect(spill, `sections hanging out of the panel at ${height}px`).toBe(0);
+    expect(await page.evaluate(() => { const list = document.querySelector('.channels-body')!; return list.scrollHeight > list.clientHeight; })).toBe(true);
+  }
+});
+
 for (const enabled of [false, true]) {
   test(`Xenium clicks and dragging respect scrollToZoom=${enabled}`, async ({ page }) => {
     await open(page, enabled);

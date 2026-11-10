@@ -9,7 +9,7 @@ function load(file) {
 	return loaded.exports;
 }
 
-const { placeScaleBar, clampScaleBarPosition } = load('media/modules/scale-bar.ts');
+const { placeScaleBar, clampScaleBarPosition, SCALE_BAR_PAD_TOP } = load('media/modules/scale-bar.ts');
 
 const base = {
 	visibleWidth: 2000,
@@ -57,6 +57,21 @@ function testPositionsAreSanitised() {
 	assert.deepEqual(clampScaleBarPosition({ x: -1, y: 2 }), { x: 0, y: 1 });
 }
 
+function testChannelsPanelStopsAboveTheScaleBar() {
+	const css = fs.readFileSync('media/imagePreview.css', 'utf8');
+	const reserved = Number(/--scale-bar-reserved-height:\s*(\d+)px/.exec(css)?.[1]);
+	const clearance = Number(/const HUD_CLEARANCE = (\d+);/.exec(fs.readFileSync('media/modules/scene/scene-viewer.ts', 'utf8'))?.[1]);
+	assert.ok(reserved > 0 && clearance > 0, 'both values can be read from the source');
+	const viewportHeight = 800;
+	for (const bottomClearance of [0, clearance]) {
+		const placed = placeScaleBar({ ...base, bottomClearance });
+		const topEdge = viewportHeight - (placed.y - SCALE_BAR_PAD_TOP);
+		assert.ok(reserved >= topEdge, `${reserved}px reserved must cover a bar whose top edge is ${topEdge}px from the bottom`);
+	}
+	assert.match(css, /\.channels-panel \{[^}]*max-height: calc\(100vh - 20px - var\(--scale-bar-reserved-height[^}]*var\(--measure-scale-bar-bottom-inset/,
+		'the Channels window is capped by the reserved height and the host inset');
+}
+
 function testViewersShareTheModuleAndTheCommandUsesTheActiveViewer() {
 	const read = file => fs.readFileSync(file, 'utf8');
 	assert.match(read('media/modules/measure/roi-overlay.ts'), /from '\.\.\/scale-bar\.js'/, 'the image viewer draws through the shared module');
@@ -72,5 +87,6 @@ testAutomaticPlacementIsAnchoredToTheViewerNotTheImage();
 testBottomInsetKeepsTheBarAboveHostChrome();
 testCustomPositionIsViewportRelativeAndClamped();
 testPositionsAreSanitised();
+testChannelsPanelStopsAboveTheScaleBar();
 testViewersShareTheModuleAndTheCommandUsesTheActiveViewer();
 console.log('Shared scale bar placement and routing passed.');
