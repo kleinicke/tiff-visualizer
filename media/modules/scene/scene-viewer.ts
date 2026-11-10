@@ -129,6 +129,8 @@ export class SceneViewer {
 		this.canvas.addEventListener('pointermove', event => this.onPointerMove(event));
 		this.canvas.addEventListener('pointerup', event => this.onPointerUp(event));
 		this.canvas.addEventListener('pointercancel', event => this.onPointerUp(event));
+		// A release outside the webview may reach neither pointerup nor pointercancel.
+		this.canvas.addEventListener('lostpointercapture', event => this.onPointerUp(event));
 		this.canvas.addEventListener('pointerleave', () => { this.cursor = null; this.updateHud(); });
 		this.canvas.addEventListener('dblclick', event => {
 			if (this.scrollToZoom && event.button === 0) { event.preventDefault(); this.fit(); }
@@ -454,6 +456,8 @@ export class SceneViewer {
 	private onPointerMove(event: PointerEvent): void {
 		const rect = this.canvas.getBoundingClientRect();
 		this.cursor = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+		// With no button down the release was missed, so the drag is over.
+		if ((this.drag || this.pressed) && event.buttons === 0) { this.onPointerUp(event); this.updateHud(); return; }
 		if (this.drag && (this.drag.moved || Math.hypot(event.clientX - this.drag.startX, event.clientY - this.drag.startY) >= PAN_DRAG_THRESHOLD)) {
 			this.drag.moved = true;
 			this.pressed = null;

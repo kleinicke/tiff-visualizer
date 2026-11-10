@@ -199,3 +199,40 @@ test('disabling clears translation after scrolling into displaced image overflow
   await setting(page, false);
   expect(await image(page).evaluate(element => element.style.translate)).toBe('');
 });
+
+test('drag-pan ends when the release is missed', async ({ page }) => {
+  await open(page, true);
+  await scale(page, 4);
+  const before = await rect(page);
+  await page.mouse.move(600, 350); await page.mouse.down(); await page.mouse.move(640, 380, { steps: 6 });
+  const dragged = await rect(page);
+  expect(dragged.x).not.toBe(before.x);
+  // The button was released outside the window, so no mouseup arrived; the next move has no button down.
+  await page.evaluate(() => {
+    window.dispatchEvent(new MouseEvent('mousemove', { clientX: 700, clientY: 420, buttons: 0, bubbles: true }));
+    window.dispatchEvent(new MouseEvent('mousemove', { clientX: 760, clientY: 450, buttons: 0, bubbles: true }));
+  });
+  await settle(page);
+  expect(await rect(page)).toEqual(dragged);
+  expect(await page.evaluate(() => document.body.classList.contains('panning'))).toBe(false);
+  await page.mouse.up();
+});
+
+// The webview does not receive pointer events once the cursor leaves the window unless the pointer is
+// captured, so the pan holds it for as long as the button is down and lets go of it afterwards.
+test('drag-pan captures the pointer until the button is released', async ({ page }) => {
+  await open(page, true);
+  await scale(page, 4);
+  await page.evaluate(() => {
+    const w = window as any;
+    w.captures = { got: 0, lost: 0 };
+    document.body.addEventListener('gotpointercapture', () => w.captures.got++);
+    document.body.addEventListener('lostpointercapture', () => w.captures.lost++);
+  });
+  const captures = () => page.evaluate(() => (window as any).captures);
+  await page.mouse.move(600, 350); await page.mouse.down(); await page.mouse.move(640, 380, { steps: 6 });
+  expect(await captures()).toEqual({ got: 1, lost: 0 });
+  await page.mouse.up();
+  expect(await captures()).toEqual({ got: 1, lost: 1 });
+  expect(await page.evaluate(() => document.body.classList.contains('panning'))).toBe(false);
+});
