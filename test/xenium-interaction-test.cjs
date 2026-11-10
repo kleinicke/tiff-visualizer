@@ -22,13 +22,13 @@ function load(file, vscode) {
   assert.equal(wheelZoomFactor({ ...wheel, deltaY: 0 }, 600, true), 1);
   assert.equal(wheelZoomFactor(wheel, 600, true), Math.exp(0.025));
 
-  let enabled = false, watcher, disposed = false, onDispose;
+  let enabled = false, anchored, watcher, disposed = false, onDispose;
   const messages = [];
   const vscode = {
     Uri: { joinPath: Utils.joinPath },
     workspace: {
       workspaceFolders: [],
-      getConfiguration: section => ({ get: (key, fallback) => section === 'tiffVisualizer' && key === 'scrollToZoom' ? enabled : fallback }),
+      getConfiguration: section => ({ get: (key, fallback) => section === 'tiffVisualizer' && key === 'scrollToZoom' ? enabled : section === 'tiffVisualizer.scaleBar' && key === 'anchorToImage' && anchored !== undefined ? anchored : fallback }),
       onDidChangeConfiguration: callback => { watcher = callback; return { dispose() { disposed = true; } }; },
     },
   };
@@ -48,7 +48,44 @@ function load(file, vscode) {
   enabled = true;
   await new XeniumEditorProvider(URI.file('/extension')).resolveCustomEditor({ uri: URI.file('/sample/experiment.xenium') }, panel);
   assert.match(panel.webview.html, /scrollToZoom&quot;:true/, 'a newly opened viewer gets the current setting');
+  assert.match(panel.webview.html, /scaleBarAnchorToImage&quot;:true/, 'the scale bar is anchored to the image by default');
+  for (const next of [false, true]) {
+    anchored = next;
+    watcher({ affectsConfiguration: name => name === 'tiffVisualizer.scaleBar.anchorToImage' });
+    assert.equal(messages.at(-1).scaleBarAnchorToImage, next, 'changing the anchor setting reaches an open viewer');
+  }
+  anchored = false;
+  await new XeniumEditorProvider(URI.file('/extension')).resolveCustomEditor({ uri: URI.file('/sample/experiment.xenium') }, panel);
+  assert.match(panel.webview.html, /scaleBarAnchorToImage&quot;:false/, 'a newly opened viewer gets the current anchor setting');
+  anchored = undefined;
   onDispose();
   assert.equal(disposed, true);
-  console.log('Shared wheel policy and Xenium configuration delivery passed.');
+  const events = [];
+  let shown = true, listener, sessionDisposed = false, registered, received, disposeScalePanel;
+  const registry = {
+    settingsManager: {
+      getShowScaleBar: () => shown,
+      toggleScaleBar: () => { shown = !shown; listener(); return shown; },
+      onDidChangeSettings: callback => { listener = callback; return { dispose() { sessionDisposed = true; } }; },
+    },
+    registerViewer: (target, registeredPanel) => { registered = { target, registeredPanel }; },
+  };
+  const scalePanel = {
+    webview: { cspSource: 'test-resource:', asWebviewUri: uri => uri, postMessage: message => { events.push(message); }, onDidReceiveMessage: callback => { received = callback; } },
+    onDidDispose: callback => { disposeScalePanel = callback; },
+  };
+  await new XeniumEditorProvider(URI.file('/extension'), registry).resolveCustomEditor({ uri: URI.file('/sample/experiment.xenium') }, scalePanel);
+  assert.match(scalePanel.webview.html, /showScaleBar&quot;:true/, 'a new viewer starts from the session scale bar setting');
+  assert.equal(registered.registeredPanel, scalePanel, 'the viewer registers itself as a command target');
+  registered.target.toggleScaleBar();
+  assert.equal(events.at(-1).type, 'settings');
+  assert.equal(events.at(-1).showScaleBar, false, 'a session change reaches the open viewer');
+  await received({ type: 'executeCommand', command: 'tiffVisualizer.toggleScaleBar' });
+  assert.equal(events.at(-1).showScaleBar, true, 'the viewer menu toggles the same session setting');
+  const before = events.length;
+  await received({ type: 'executeCommand', command: 'workbench.action.closeWindow' });
+  assert.equal(events.length, before, 'the webview cannot run other commands through this message');
+  disposeScalePanel();
+  assert.equal(sessionDisposed, true, 'the session listener is released with the panel');
+  console.log('Shared wheel policy, Xenium configuration delivery and scale bar routing passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

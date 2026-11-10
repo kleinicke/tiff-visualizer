@@ -7,6 +7,7 @@ import {
 import { escapeAttribute, getNonce } from '../util/dom';
 import { answerCellRequest, configuredSources, specFor, type ConfiguredSource } from '../cells/cellFiles';
 import { getCellIdColumns } from '../cells/cellIdColumns';
+import type { IViewerCommandTarget, IViewerRegistry } from '../imagePreview/types';
 
 /**
  * Opens a Xenium output bundle from its `experiment.xenium` manifest.
@@ -21,7 +22,8 @@ import { getCellIdColumns } from '../cells/cellIdColumns';
 export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider {
 	public static readonly viewType = 'tiffVisualizer.xeniumViewer';
 
-	constructor(private readonly extensionRoot: vscode.Uri) { }
+	/** `viewers` is how shared commands (Toggle Scale Bar) and session settings reach this viewer; without it the viewer runs on defaults. */
+	constructor(private readonly extensionRoot: vscode.Uri, private readonly viewers?: IViewerRegistry) { }
 
 	public async openCustomDocument(uri: vscode.Uri): Promise<vscode.CustomDocument> {
 		return { uri, dispose: () => { } };
@@ -41,11 +43,22 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 		panel.webview.html = this.html(panel.webview);
 		// Keep groups and interaction settings current in an open viewer.
 		const settingsWatcher = vscode.workspace.onDidChangeConfiguration(event => {
-			if (event.affectsConfiguration('tiffVisualizer.channels') || event.affectsConfiguration('tiffVisualizer.transcripts') || event.affectsConfiguration('tiffVisualizer.scrollToZoom') || event.affectsConfiguration('tiffVisualizer.cells.cellIdCol')) {
-				void panel.webview.postMessage({ type: 'settings', scrollToZoom: this.getScrollToZoom(), channelDefaults: this.getChannelDefaults(), transcriptGroups: this.getTranscriptGroups(), cellIdCols: getCellIdColumns() });
+			if (event.affectsConfiguration('tiffVisualizer.channels') || event.affectsConfiguration('tiffVisualizer.transcripts') || event.affectsConfiguration('tiffVisualizer.scrollToZoom') || event.affectsConfiguration('tiffVisualizer.scaleBar.anchorToImage') || event.affectsConfiguration('tiffVisualizer.cells.cellIdCol')) {
+				void panel.webview.postMessage({ type: 'settings', ...this.settings() });
 			}
 		});
-		panel.onDidDispose(() => settingsWatcher.dispose());
+		// The scale bar is a session preference shared with the image viewer, so a
+		// toggle made from any viewer reaches this one through the session settings.
+		let shownScaleBar = this.getShowScaleBar();
+		const sessionWatcher = this.viewers?.settingsManager.onDidChangeSettings(() => {
+			const shown = this.getShowScaleBar();
+			if (shown === shownScaleBar) { return; }
+			shownScaleBar = shown;
+			void panel.webview.postMessage({ type: 'settings', ...this.settings() });
+		});
+		panel.onDidDispose(() => { settingsWatcher.dispose(); sessionWatcher?.dispose(); });
+		const target: IViewerCommandTarget = { toggleScaleBar: () => { this.viewers?.settingsManager.toggleScaleBar(); } };
+		this.viewers?.registerViewer(target, panel);
 		panel.webview.onDidReceiveMessage(async message => {
 			switch (message?.type) {
 				case 'ready':
@@ -56,6 +69,10 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 					break;
 				case 'browseCell':
 					await answerCellRequest(panel.webview, message.requestId, bundleFolder, roots, null);
+					break;
+				case 'executeCommand':
+					// Only the commands this viewer offers in its own menu.
+					if (message.command === 'tiffVisualizer.toggleScaleBar') { target.toggleScaleBar?.(); }
 					break;
 				case 'openAsText':
 					await vscode.commands.executeCommand('vscode.openWith', document.uri, 'default');
@@ -99,6 +116,26 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 		}
 	}
 
+	private getScaleBarAnchorToImage(): boolean {
+		return vscode.workspace.getConfiguration('tiffVisualizer.scaleBar').get<boolean>('anchorToImage', true);
+	}
+
+	private getShowScaleBar(): boolean {
+		return this.viewers?.settingsManager.getShowScaleBar() ?? true;
+	}
+
+	/** The settings the webview applies, sent whole on every change. */
+	private settings() {
+		return {
+			scrollToZoom: this.getScrollToZoom(),
+			showScaleBar: this.getShowScaleBar(),
+			scaleBarAnchorToImage: this.getScaleBarAnchorToImage(),
+			channelDefaults: this.getChannelDefaults(),
+			transcriptGroups: this.getTranscriptGroups(),
+			cellIdCols: getCellIdColumns(),
+		};
+	}
+
 	private getScrollToZoom(): boolean {
 		return vscode.workspace.getConfiguration('tiffVisualizer').get<boolean>('scrollToZoom', false);
 	}
@@ -128,12 +165,7 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 			transcriptsWasm: asset('wasm', 'transcripts-wasm.wasm'),
 			nonce,
 		};
-		const settings = {
-			scrollToZoom: this.getScrollToZoom(),
-			channelDefaults: this.getChannelDefaults(),
-			transcriptGroups: this.getTranscriptGroups(),
-			cellIdCols: getCellIdColumns(),
-		};
+		const settings = this.settings();
 		return /* html */`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -155,10 +187,10 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 	}
 }
 
-export function registerXeniumSupport(context: vscode.ExtensionContext): vscode.Disposable {
+export function registerXeniumSupport(context: vscode.ExtensionContext, viewers?: IViewerRegistry): vscode.Disposable {
 	return vscode.window.registerCustomEditorProvider(
 		XeniumEditorProvider.viewType,
-		new XeniumEditorProvider(context.extensionUri),
+		new XeniumEditorProvider(context.extensionUri, viewers),
 		{ supportsMultipleEditorsPerDocument: true, webviewOptions: { retainContextWhenHidden: true } },
 	);
 }

@@ -22,6 +22,73 @@ async function open(page: Page, enabled: boolean) {
 const camera = (page: Page) => page.evaluate(() => (window as any).scene.currentCamera);
 async function settle(page: Page) { await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))); }
 
+test('Xenium scale bar follows the zoom, hides, moves and stays clear of the readout', async ({ page }) => {
+  await open(page, false);
+  await page.addStyleTag({ content: readFileSync(path.join(root, 'media/imagePreview.css'), 'utf8') });
+  await settle(page);
+  const handle = page.locator('.measure-scale-bar-handle');
+  const white = async (x: number, y: number) => page.evaluate(([px, py]) => Array.from((document.querySelector('.scene-canvas') as HTMLCanvasElement).getContext('2d')!.getImageData(px, py, 1, 1).data).slice(0, 3).join(), [x, y]);
+  await expect(handle).toBeVisible();
+  const box = (await handle.boundingBox())!;
+  expect(await white(Math.round(box.x + box.width / 2), Math.round(box.y + 16))).toBe('255,255,255');
+  const hud = (await page.locator('.scene-hud').boundingBox())!;
+  expect(box.y + box.height).toBeLessThanOrEqual(hud.y);
+
+  await page.evaluate(() => (window as any).scene.setCamera({ scale: 2, x: -300, y: -300 }));
+  await settle(page);
+  const zoomed = (await handle.boundingBox())!;
+  expect(zoomed.width).toBeLessThan(box.width * 4);
+  expect(zoomed.width).not.toBe(box.width);
+  expect([zoomed.x, zoomed.y]).toEqual([box.x, box.y]);
+  await page.evaluate(() => (window as any).scene.setCamera({ scale: 2, x: -50, y: -700 }));
+  await settle(page);
+  expect(await handle.boundingBox()).toMatchObject({ x: zoomed.x, y: zoomed.y });
+
+  await page.mouse.move(zoomed.x + zoomed.width / 2, zoomed.y + 16); await page.mouse.down();
+  await page.mouse.move(zoomed.x + zoomed.width / 2 + 40, zoomed.y - 120, { steps: 6 }); await page.mouse.up();
+  await settle(page);
+  expect(await page.evaluate(() => (window as any).scene.hasCustomScaleBarPosition())).toBe(true);
+  expect((await handle.boundingBox())!.y).toBeLessThan(zoomed.y - 80);
+  await page.evaluate(() => (window as any).scene.resetScaleBarPosition());
+  await settle(page);
+  expect((await handle.boundingBox())!.y).toBeCloseTo(zoomed.y, 0);
+
+  await page.evaluate(() => (window as any).scene.setShowScaleBar(false));
+  await settle(page);
+  await expect(handle).toBeHidden();
+  await page.evaluate(() => (window as any).scene.setShowScaleBar(true));
+  await settle(page);
+  await expect(handle).toBeVisible();
+});
+
+test('Channels window stops above the scale bar at any window height', async ({ page }) => {
+  await open(page, false);
+  await page.addStyleTag({ content: readFileSync(path.join(root, 'media/imagePreview.css'), 'utf8') });
+  // The structure of ui/components/Channels.svelte with a long channel list and tall Cells and Transcripts sections.
+  await page.evaluate(() => {
+    const rows = (count: number, height: number) => Array.from({ length: count }, () => `<div style="height:${height}px;flex:none">row</div>`).join('');
+    document.body.insertAdjacentHTML('beforeend', `<div class="channels-panel"><div class="channels-header">Channels</div>`
+      + `<details class="channels-global" open><summary class="channels-section-title">All channels (41)</summary><div class="channels-toolbar" style="height:60px"></div></details>`
+      + `<div class="channels-body">${rows(41, 46)}</div>`
+      + `<section class="cells-section"><div class="cells-header">Cells</div><div class="cells-body">${rows(30, 30)}</div></section>`
+      + `<section class="cells-section transcripts-section"><div class="cells-header">Transcripts</div><div class="cells-body">${rows(30, 30)}</div></section></div>`);
+  });
+  const handle = page.locator('.measure-scale-bar-handle');
+  for (const height of [600, 800, 1000]) {
+    await page.setViewportSize({ width: 800, height });
+    await expect.poll(async () => (await handle.boundingBox())?.y ?? 0).toBeGreaterThan(height - 100);
+    const bar = (await handle.boundingBox())!;
+    const panel = (await page.locator('.channels-panel').boundingBox())!;
+    expect(panel.y + panel.height, `panel bottom at ${height}px`).toBeLessThanOrEqual(bar.y);
+    const spill = await page.evaluate(() => {
+      const box = document.querySelector('.channels-panel')!.getBoundingClientRect();
+      return Array.from(document.querySelector('.channels-panel')!.children).filter(child => child.getBoundingClientRect().bottom > box.bottom + 0.5).length;
+    });
+    expect(spill, `sections hanging out of the panel at ${height}px`).toBe(0);
+    expect(await page.evaluate(() => { const list = document.querySelector('.channels-body')!; return list.scrollHeight > list.clientHeight; })).toBe(true);
+  }
+});
+
 for (const enabled of [false, true]) {
   test(`Xenium clicks and dragging respect scrollToZoom=${enabled}`, async ({ page }) => {
     await open(page, enabled);

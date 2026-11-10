@@ -3,6 +3,11 @@
   import CellSet from './CellSet.svelte';
   let { cells, open = $bindable(true) }: { cells: CellsPanelModel; open?: boolean } = $props();
   let text = $state('');
+  // Folding the section unmounts its cell sets, so their fold state is kept here. A set the bundle
+  // loads by itself (the Xenium cells) starts folded; one the user adds or loads starts open.
+  let folded = $state<Record<string, boolean>>({});
+  const isOpen = (set: CellsPanelModel['sets'][number]) => !(folded[set.id] ?? set.origin === 'native');
+  function toggle(set: CellsPanelModel['sets'][number]) { folded[set.id] = isOpen(set); }
   const requested = new Set<string>();
   $effect(() => {
     for (const row of cells.pending) {
@@ -26,7 +31,7 @@
   {#if open}
     <div class="cells-body">
       {#if cells.status && cells.sets.length === 0}<div class="measure-note">{cells.status}</div>{/if}
-      {#if cells.sets.length}<div class="cell-sets">{#each cells.sets as set (set.id)}<CellSet {set} />{/each}</div>{/if}
+      {#if cells.sets.length}<div class="cell-sets">{#each cells.sets as set (set.id)}<CellSet {set} open={isOpen(set)} ontoggle={() => toggle(set)} />{/each}</div>{/if}
       {#each cells.pending as row (row.id)}
         <div class="cells-table-row" class:unavailable={row.state === 'missing' || row.state === 'error'} title={row.detail ? `${row.path}\n${row.detail}` : row.path}>
           <span class="cells-source-kind">cells</span>

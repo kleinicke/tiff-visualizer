@@ -2,6 +2,8 @@
 
 import { PAN_DRAG_THRESHOLD, wheelDeltaPixels, wheelShouldZoom, wheelZoomFactor } from '../zoom-interaction.js';
 import { compositeChannels, type ChannelPlane, type ChannelSettings } from '../channel-composite.js';
+import type { Calibration } from '../measure/types.js';
+import { ScaleBarControl, type ScaleBarPosition } from '../scale-bar.js';
 import type { RegionSamples, TiffChannelSource } from './channel-source.js';
 import {
 	chooseLevel, chooseOverview, clampCamera, fitCamera, fitScale, screenToScene, tileKey, tileRect, tileSceneRect,
@@ -53,6 +55,13 @@ export interface SceneViewerOptions {
 	nanColor?: [number, number, number];
 	initialCamera?: Camera;
 	onCameraChange?: (camera: Camera) => void;
+	/** Whether the scale bar is drawn. Defaults to true. */
+	showScaleBar?: boolean;
+	/** `tiffVisualizer.scaleBar.anchorToImage`: the bar follows the tissue image instead of the viewer. */
+	anchorScaleBarToImage?: boolean;
+	initialScaleBarPosition?: ScaleBarPosition | null;
+	/** The user moved or reset the scale bar: save its position. */
+	onScaleBarChange?: () => void;
 }
 
 interface TileEntry {
@@ -73,6 +82,8 @@ interface TileEntry {
 const CACHE_BYTES = 640 * 1024 * 1024;
 const MAX_ZOOM_PIXELS = 24;
 const BACKGROUND = '#161616';
+/** Space kept free under the scale bar for the readout in the lower-left corner. */
+const HUD_CLEARANCE = 26;
 const EMPTY: ArrayLike<number> = new Uint8Array(0);
 
 export class SceneViewer {
@@ -82,6 +93,9 @@ export class SceneViewer {
 	private readonly options: SceneViewerOptions;
 	private readonly canvas: HTMLCanvasElement;
 	private readonly hud: HTMLDivElement;
+	private readonly scaleBar: ScaleBarControl;
+	private showScaleBar = true;
+	private anchorScaleBarToImage = false;
 	private readonly context: CanvasRenderingContext2D;
 	private readonly overviewPosition: number;
 	private readonly overviewCanvas = document.createElement('canvas');
@@ -121,6 +135,9 @@ export class SceneViewer {
 		this.hud = document.createElement('div');
 		this.hud.className = 'scene-hud';
 		options.container.append(this.canvas, this.hud);
+		this.scaleBar = new ScaleBarControl({ onMove: () => this.requestRender(), onChange: () => options.onScaleBarChange?.(), onWheel: event => this.onWheel(event) }, options.container);
+		this.showScaleBar = options.showScaleBar !== false;
+		this.anchorScaleBarToImage = options.anchorScaleBarToImage === true;
 
 		this.resizeObserver = new ResizeObserver(() => this.resize());
 		this.resizeObserver.observe(options.container);
@@ -152,6 +169,7 @@ export class SceneViewer {
 		const position = chooseOverview(first, options.overviewMaxPixels ?? 2_000_000);
 		const viewer = new SceneViewer(options, position);
 		await viewer.readOverview();
+		if (options.initialScaleBarPosition) { viewer.scaleBar.setPosition(options.initialScaleBarPosition); }
 		viewer.requestRender();
 		return viewer;
 	}
@@ -176,6 +194,18 @@ export class SceneViewer {
 	get currentCamera(): Camera { return { ...this.camera }; }
 
 	setCamera(camera: Camera): void { this.camera = this.clamped(camera); this.cameraChanged(); }
+
+	setShowScaleBar(show: boolean): void { this.showScaleBar = show; this.requestRender(); }
+	getShowScaleBar(): boolean { return this.showScaleBar; }
+	setAnchorScaleBarToImage(anchor: boolean): void {
+		if (this.anchorScaleBarToImage === anchor) { return; }
+		this.anchorScaleBarToImage = anchor;
+		this.requestRender();
+	}
+	toggleScaleBar(): boolean { this.setShowScaleBar(!this.showScaleBar); return this.showScaleBar; }
+	getScaleBarPosition(): ScaleBarPosition | null { return this.scaleBar.getPosition(); }
+	resetScaleBarPosition(): void { this.scaleBar.reset(); }
+	hasCustomScaleBarPosition(): boolean { return this.scaleBar.hasCustomPosition(); }
 
 	setScrollToZoom(enabled: boolean): void {
 		if (!enabled) {
@@ -216,6 +246,7 @@ export class SceneViewer {
 		this.tiles.clear();
 		this.canvas.remove();
 		this.hud.remove();
+		this.scaleBar.dispose();
 	}
 
 	// --- display state -----------------------------------------------------
@@ -313,6 +344,27 @@ export class SceneViewer {
 		}
 		for (const overlay of this.overlays) { overlay.draw(context, this.camera, scale); }
 		context.setTransform(1, 0, 0, 1, 0, 0);
+		this.drawScaleBar(context, dpr);
+	}
+
+	private drawScaleBar(context: CanvasRenderingContext2D, dpr: number): void {
+		this.scaleBar.hideHandle();
+		if (!this.showScaleBar) { return; }
+		const micron = this.options.pixelSizeUm;
+		const calibration: Calibration = { pixelWidth: micron, pixelHeight: micron, unit: 'µm', origin: 'imported' };
+		context.save();
+		context.setTransform(dpr, 0, 0, dpr, 0, 0);
+		this.scaleBar.draw(context, {
+			visibleWidth: this.viewWidth / this.camera.scale,
+			pixelScale: this.camera.scale,
+			calibration,
+			bottomClearance: HUD_CLEARANCE,
+			// The scene origin is drawn at the camera translation, so the tissue image
+			// occupies this rectangle in viewport pixels.
+			imageRect: { left: this.camera.x, top: this.camera.y, width: this.scene.width * this.camera.scale, height: this.scene.height * this.camera.scale },
+			anchorToImage: this.anchorScaleBarToImage,
+		});
+		context.restore();
 	}
 
 	// --- tiles -------------------------------------------------------------

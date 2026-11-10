@@ -30,7 +30,7 @@ export function activate(context: vscode.ExtensionContext) {
 	const binarySizeStatusBarEntry = new BinarySizeStatusBarEntry();
 	context.subscriptions.push(binarySizeStatusBarEntry);
 
-	const disposable = registerImagePreviewSupport(context, binarySizeStatusBarEntry);
-	context.subscriptions.push(disposable);
-	context.subscriptions.push(registerXeniumSupport(context));
+	const registration = registerImagePreviewSupport(context, binarySizeStatusBarEntry);
+	context.subscriptions.push(registration);
+	context.subscriptions.push(registerXeniumSupport(context, registration.previewManager));
 }

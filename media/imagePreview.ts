@@ -901,6 +901,7 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 	if (typeof settingsManager.settings.showScaleBar === 'boolean') {
 		roiOverlay.setShowScaleBar(settingsManager.settings.showScaleBar);
 	}
+	roiOverlay.setAnchorScaleBarToImage(settingsManager.settings.scaleBarAnchorToImage === true);
 
 	function invalidatePyramidViewport(): void {
 		_pyramidViewGeneration++;
@@ -3914,6 +3915,7 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 				if (typeof message.settings?.showScaleBar === 'boolean') {
 					roiOverlay.setShowScaleBar(message.settings.showScaleBar);
 				}
+				roiOverlay.setAnchorScaleBarToImage(settingsManager.settings.scaleBarAnchorToImage === true);
 				// A hole over the editor background is nearly indistinguishable
 				// from a black pixel in a dark theme, which would make the
 				// transparent choice look like it did nothing. The checkerboard
@@ -5184,16 +5186,12 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 				() => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleMeasure' }); },
 			));
 
-			// A scale-bar command is meaningful only after the current image has
-			// supplied physical calibration (embedded metadata or Set Scale).
-			if (measureCalibration.origin !== 'none') {
-				measureItems.push(createMenuItem(
-					roiOverlay.getShowScaleBar() ? 'Hide Scale Bar' : 'Show Scale Bar',
-					() => { vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleScaleBar' }); },
-				));
-				if (roiOverlay.hasCustomScaleBarPosition()) {
-					measureItems.push(createMenuItem('Reset Scale Bar Position', () => roiOverlay.resetScaleBarPosition()));
-				}
+			// Showing and hiding the bar is the Toggle Scale Bar command and the
+			// Measure panel's checkbox. The menu only offers what is specific to a
+			// bar that has been moved, and only once the image has supplied physical
+			// calibration (embedded metadata or Set Scale).
+			if (measureCalibration.origin !== 'none' && roiOverlay.hasCustomScaleBarPosition()) {
+				measureItems.push(createMenuItem('Reset Scale Bar Position', () => roiOverlay.resetScaleBarPosition()));
 			}
 
 			// Check if image is 8-bit uint RGB for interpretation options

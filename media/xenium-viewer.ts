@@ -25,6 +25,7 @@ import { parseTranscriptGroups, TranscriptsWorkspace, type TranscriptsWorkspaceS
 import { SceneViewer } from './modules/scene/scene-viewer.js';
 import type { Camera } from './modules/scene/pyramid.js';
 import { omeChannelHints, purposeTint, type SceneManifest } from './modules/scene/xenium-manifest.js';
+import type { ScaleBarPosition } from './modules/scale-bar.js';
 import type { ChannelDefaults } from '../shared/viewer-settings';
 
 declare function acquireVsCodeApi(): { postMessage(message: unknown): void; getState(): any; setState(state: unknown): void };
@@ -33,13 +34,14 @@ interface PersistedState {
 	names: string[];
 	channelSettings: ChannelSettings[];
 	camera?: Camera;
+	scaleBarPosition?: ScaleBarPosition | null;
 	cells?: CellsWorkspaceState;
 	transcripts?: TranscriptsWorkspaceState;
 }
 
 const vscode = acquireVsCodeApi();
 const root = document.getElementById('scene-root')!;
-const startup = JSON.parse(document.getElementById('xenium-settings')?.dataset.settings || '{}') as { scrollToZoom?: boolean; channelDefaults?: ChannelDefaults; transcriptGroups?: unknown; cellIdCols?: string[] };
+const startup = JSON.parse(document.getElementById('xenium-settings')?.dataset.settings || '{}') as { scrollToZoom?: boolean; showScaleBar?: boolean; scaleBarAnchorToImage?: boolean; channelDefaults?: ChannelDefaults; transcriptGroups?: unknown; cellIdCols?: string[] };
 
 let viewer: SceneViewer | null = null;
 let pixelSizeUm = 1;
@@ -105,7 +107,7 @@ function planes(): ChannelPlane[] { return viewer?.overviewPlanes ?? []; }
 
 function persist(): void {
 	if (!viewer) { return; }
-	const state: PersistedState = { names: planes().map(plane => plane.name), channelSettings: settings, camera: viewer.currentCamera, cells: workspace?.getState(), transcripts: transcripts?.getState() };
+	const state: PersistedState = { names: planes().map(plane => plane.name), channelSettings: settings, camera: viewer.currentCamera, scaleBarPosition: viewer.getScaleBarPosition(), cells: workspace?.getState(), transcripts: transcripts?.getState() };
 	vscode.setState(state);
 }
 
@@ -195,9 +197,15 @@ async function start(manifest: SceneManifest): Promise<void> {
 			getSolo: soloIndices,
 			initialCamera: restorable?.camera,
 			onCameraChange: persist,
+			showScaleBar: startup.showScaleBar !== false,
+			anchorScaleBarToImage: startup.scaleBarAnchorToImage === true,
+			initialScaleBarPosition: restorable?.scaleBarPosition,
+			onScaleBarChange: persist,
 		});
 		// Configuration can change while the overview is being decoded.
 		viewer.setScrollToZoom(startup.scrollToZoom === true);
+		viewer.setShowScaleBar(startup.showScaleBar !== false);
+		viewer.setAnchorScaleBarToImage(startup.scaleBarAnchorToImage === true);
 
 		const colors = suggestedChannelColors(viewer.overviewPlanes, manifest.channels.map((_channel, position) => purposeTint(hintFor(position)?.purpose)), startup.channelDefaults);
 		settings = defaultChannelSettings(viewer.overviewPlanes, { colors });
@@ -269,6 +277,14 @@ window.addEventListener('message', event => {
 			startup.scrollToZoom = message.scrollToZoom;
 			viewer?.setScrollToZoom(message.scrollToZoom);
 		}
+		if (typeof message.showScaleBar === 'boolean') {
+			startup.showScaleBar = message.showScaleBar;
+			viewer?.setShowScaleBar(message.showScaleBar);
+		}
+		if (typeof message.scaleBarAnchorToImage === 'boolean') {
+			startup.scaleBarAnchorToImage = message.scaleBarAnchorToImage;
+			viewer?.setAnchorScaleBarToImage(message.scaleBarAnchorToImage);
+		}
 		startup.channelDefaults = message.channelDefaults as ChannelDefaults;
 		startup.transcriptGroups = message.transcriptGroups;
 		startup.cellIdCols = message.cellIdCols as string[] | undefined;
@@ -296,6 +312,7 @@ document.addEventListener('contextmenu', event => {
 	const items: MenuItem[] = [{ heading: true, label: 'Display' }];
 	items.push(defer('Fit to View', () => viewer?.fit()));
 	items.push(defer('Toggle Channels Panel', () => panel?.toggle()));
+	if (viewer?.hasCustomScaleBarPosition()) { items.push(defer('Reset Scale Bar Position', () => viewer?.resetScaleBarPosition())); }
 	items.push({ heading: true, label: 'Inspect' });
 	if (point) {
 		const px = `${Math.floor(point.x)}, ${Math.floor(point.y)}`;

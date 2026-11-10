@@ -40,6 +40,8 @@ export interface ImageSettings extends Partial<DisplaySettings> {
   colorPickerShowModified?: boolean;
   /** Session-wide idle scale bar visibility, owned by the extension host. */
   showScaleBar?: boolean;
+  /** `tiffVisualizer.scaleBar.anchorToImage`: the scale bar starts at the bottom of the image and a moved bar stays at its place in the image. */
+  scaleBarAnchorToImage?: boolean;
   gpuAcceleration?: boolean;
   navigationShortcuts?: Record<string, string[]>;
   /** Wheel zooms about the cursor without a modifier key, and dragging the image pans it. */

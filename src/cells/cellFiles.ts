@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { Utils } from 'vscode-uri';
-import { expandSampleName, isAbsolutePath, sourceNameFromPath, type CellSourceSpec } from '../../media/modules/scene/xenium-manifest';
+import type { CellSourceSpec } from '../../media/modules/scene/xenium-manifest';
+import { expandSampleName, isAbsolutePath, sourceNameFromPath } from '../../shared/cell-paths';
 
 /**
  * Locating cell files for the Cells panel, shared by the Xenium viewer and the
