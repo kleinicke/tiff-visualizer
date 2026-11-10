@@ -312,8 +312,6 @@ document.addEventListener('contextmenu', event => {
 	const items: MenuItem[] = [{ heading: true, label: 'Display' }];
 	items.push(defer('Fit to View', () => viewer?.fit()));
 	items.push(defer('Toggle Channels Panel', () => panel?.toggle()));
-	// The host owns the session flag, so the toggle goes through it and comes back as a setting.
-	items.push(defer(viewer?.getShowScaleBar() === false ? 'Show Scale Bar' : 'Hide Scale Bar', () => vscode.postMessage({ type: 'executeCommand', command: 'tiffVisualizer.toggleScaleBar' })));
 	if (viewer?.hasCustomScaleBarPosition()) { items.push(defer('Reset Scale Bar Position', () => viewer?.resetScaleBarPosition())); }
 	items.push({ heading: true, label: 'Inspect' });
 	if (point) {

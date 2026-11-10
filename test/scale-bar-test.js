@@ -214,6 +214,13 @@ function testXeniumViewerAnchorsToTheTissueImage() {
 	assert.match(host, /affectsConfiguration\('tiffVisualizer\.scaleBar\.anchorToImage'\)/);
 }
 
+function testViewerMenusDoNotToggleTheScaleBar() {
+	for (const file of ['media/imagePreview.ts', 'media/xenium-viewer.ts']) {
+		assert.doesNotMatch(read(file), /'Hide Scale Bar'|'Show Scale Bar'/, `${file} has no show/hide item in its right-click menu`);
+		assert.match(read(file), /Reset Scale Bar Position/, `${file} still offers to reset a moved bar`);
+	}
+}
+
 function testChannelsPanelStopsAboveTheScaleBar() {
 	const css = fs.readFileSync('media/imagePreview.css', 'utf8');
 	const reserved = Number(/--scale-bar-reserved-height:\s*(\d+)px/.exec(css)?.[1]);
@@ -253,6 +260,7 @@ testPositionsKeepTheirFrameWhenSanitised();
 testSettingIsDeclaredAndReachesTheWebview();
 testDraggingWhileAnchoredToTheImageStoresAnImagePosition();
 testXeniumViewerAnchorsToTheTissueImage();
+testViewerMenusDoNotToggleTheScaleBar();
 testChannelsPanelStopsAboveTheScaleBar();
 testViewersShareTheModuleAndTheCommandUsesTheActiveViewer();
 console.log('Shared scale bar placement and routing passed.');
