@@ -22,13 +22,13 @@ function load(file, vscode) {
   assert.equal(wheelZoomFactor({ ...wheel, deltaY: 0 }, 600, true), 1);
   assert.equal(wheelZoomFactor(wheel, 600, true), Math.exp(0.025));
 
-  let enabled = false, anchored = false, watcher, disposed = false, onDispose;
+  let enabled = false, anchored, watcher, disposed = false, onDispose;
   const messages = [];
   const vscode = {
     Uri: { joinPath: Utils.joinPath },
     workspace: {
       workspaceFolders: [],
-      getConfiguration: section => ({ get: (key, fallback) => section === 'tiffVisualizer' && key === 'scrollToZoom' ? enabled : section === 'tiffVisualizer.scaleBar' && key === 'anchorToImage' ? anchored : fallback }),
+      getConfiguration: section => ({ get: (key, fallback) => section === 'tiffVisualizer' && key === 'scrollToZoom' ? enabled : section === 'tiffVisualizer.scaleBar' && key === 'anchorToImage' && anchored !== undefined ? anchored : fallback }),
       onDidChangeConfiguration: callback => { watcher = callback; return { dispose() { disposed = true; } }; },
     },
   };
@@ -48,16 +48,16 @@ function load(file, vscode) {
   enabled = true;
   await new XeniumEditorProvider(URI.file('/extension')).resolveCustomEditor({ uri: URI.file('/sample/experiment.xenium') }, panel);
   assert.match(panel.webview.html, /scrollToZoom&quot;:true/, 'a newly opened viewer gets the current setting');
-  assert.match(panel.webview.html, /scaleBarAnchorToImage&quot;:false/, 'the scale bar stays viewer-anchored by default');
-  for (const next of [true, false]) {
+  assert.match(panel.webview.html, /scaleBarAnchorToImage&quot;:true/, 'the scale bar is anchored to the image by default');
+  for (const next of [false, true]) {
     anchored = next;
     watcher({ affectsConfiguration: name => name === 'tiffVisualizer.scaleBar.anchorToImage' });
     assert.equal(messages.at(-1).scaleBarAnchorToImage, next, 'changing the anchor setting reaches an open viewer');
   }
-  anchored = true;
-  await new XeniumEditorProvider(URI.file('/extension')).resolveCustomEditor({ uri: URI.file('/sample/experiment.xenium') }, panel);
-  assert.match(panel.webview.html, /scaleBarAnchorToImage&quot;:true/, 'a newly opened viewer gets the current anchor setting');
   anchored = false;
+  await new XeniumEditorProvider(URI.file('/extension')).resolveCustomEditor({ uri: URI.file('/sample/experiment.xenium') }, panel);
+  assert.match(panel.webview.html, /scaleBarAnchorToImage&quot;:false/, 'a newly opened viewer gets the current anchor setting');
+  anchored = undefined;
   onDispose();
   assert.equal(disposed, true);
   const events = [];

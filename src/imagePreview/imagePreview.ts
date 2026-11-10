@@ -441,7 +441,7 @@ export class ImagePreview extends MediaPreview {
 	}
 
 	private getScaleBarAnchorToImage(): boolean {
-		return vscode.workspace.getConfiguration('tiffVisualizer.scaleBar').get<boolean>('anchorToImage', false);
+		return vscode.workspace.getConfiguration('tiffVisualizer.scaleBar').get<boolean>('anchorToImage', true);
 	}
 
 	private getFitUpscale(): boolean {

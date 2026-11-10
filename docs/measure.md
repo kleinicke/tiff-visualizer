@@ -223,20 +223,21 @@ A calibration you set by hand is never overwritten by a later automatic one.
 
 ### The scale bar
 
-Whenever an image is calibrated, a scale bar is drawn at the bottom left of the viewer — and
-it stays there with this panel closed, as DICOM and microscopy viewers do. It does
-not move when you pan or zoom (drag it to place it elsewhere; double-click it to
-return it to the corner). Its
-length is always a round number (1, 2 or 5 × a power of ten) in the calibrated
+Whenever an image is calibrated, a scale bar is drawn at the bottom left of the image — and
+it stays there with this panel closed, as DICOM and microscopy viewers do. It is kept inside
+the viewer while the image's corner is off screen. Drag it to place it elsewhere: it is then
+pinned to that place in the image and moves off screen with it as you pan and zoom. Drop it back
+on the image's bottom-left corner and it snaps into place and is kept on screen again;
+double-click it, or use **Reset Scale Bar Position** in the right-click menu, to return it to the
+corner. Its length is always a round number (1, 2 or 5 × a power of ten) in the calibrated
 unit and it re-picks itself as you zoom, so it never has to be read off a
 fractional value. An uncalibrated image draws nothing.
 
-Set `tiffVisualizer.scaleBar.anchorToImage` to anchor the bar to the *image* instead. It
-starts at the image's bottom left, kept inside the viewer. A bar you drag elsewhere is pinned
-to that place in the image and moves off screen with it as you pan and zoom; drop it back on
-the image's bottom-left corner and it snaps into place and is kept on screen again. The
-setting is off by default and applies to image previews and to the Xenium viewer, where the
-image is the tissue.
+Set `tiffVisualizer.scaleBar.anchorToImage` to `false` to anchor the bar to the *viewer*
+instead, as slide viewers such as QuPath do: it sits in the lower-left corner of the viewer
+and stays there when you pan and zoom, and a bar you drag stays where you put it in the
+viewer. The setting applies to image previews and to the Xenium viewer, where the image is
+the tissue.
 
 **Toggle Scale Bar** (command palette) turns it off and on; the *Show scale bar*
 checkbox under **Overlay** is the same switch.

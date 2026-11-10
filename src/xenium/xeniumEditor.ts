@@ -117,7 +117,7 @@ export class XeniumEditorProvider implements vscode.CustomReadonlyEditorProvider
 	}
 
 	private getScaleBarAnchorToImage(): boolean {
-		return vscode.workspace.getConfiguration('tiffVisualizer.scaleBar').get<boolean>('anchorToImage', false);
+		return vscode.workspace.getConfiguration('tiffVisualizer.scaleBar').get<boolean>('anchorToImage', true);
 	}
 
 	private getShowScaleBar(): boolean {

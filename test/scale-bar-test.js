@@ -116,7 +116,7 @@ function testSettingIsDeclaredAndReachesTheWebview() {
 	const properties = (Array.isArray(pkg) ? Object.assign({}, ...pkg.map(entry => entry.properties)) : pkg.properties);
 	const setting = properties['tiffVisualizer.scaleBar.anchorToImage'];
 	assert.equal(setting.type, 'boolean');
-	assert.equal(setting.default, false, 'the viewer-anchored placement stays the default');
+	assert.equal(setting.default, true, 'the image-anchored placement stays the default');
 	const host = read('src/imagePreview/imagePreview.ts');
 	assert.equal((host.match(/scaleBarAnchorToImage: this\.getScaleBarAnchorToImage\(\)/g) || []).length, 3, 'all three settings messages carry it');
 	assert.match(host, /affectsConfiguration\('tiffVisualizer\.scaleBar\.anchorToImage'\)/, 'changing it updates open previews');
