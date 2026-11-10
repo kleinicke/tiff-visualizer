@@ -12,7 +12,7 @@ import { ColorPickerModeStatusBarEntry } from './colorPickerModeStatusBarEntry';
 import { ImageSettingsManager } from './imageSettings';
 import { AppStateManager } from './appStateManager';
 import { ImagePreview } from './imagePreview';
-import type { IImagePreview, IImagePreviewManager } from './types';
+import type { IImagePreview, IImagePreviewManager, IViewerCommandTarget, IViewerRegistry } from './types';
 import { getOutputChannel } from '../extension';
 
 // Stored position state for cross-webview paste position feature
@@ -24,7 +24,7 @@ export interface CopiedPositionState {
 	sourceHeight: number;
 }
 
-export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider, IImagePreviewManager {
+export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider, IImagePreviewManager, IViewerRegistry {
 
 	public static readonly viewType = 'tiffVisualizer.previewEditor';
 	// Standalone webview panel type for the dedicated Layers window.
@@ -39,6 +39,8 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 	/** Content-derived hints for resources whose URL/path is misleading. */
 	private readonly _resourceFormatHints = new Map<string, string>();
 	private _activePreview: IImagePreview | undefined;
+	/** The viewer commands act on: the active image preview, or another viewer (Xenium) registered through `registerViewer`. */
+	private _activeViewer: IViewerCommandTarget | undefined;
 	private readonly _settingsManager = new ImageSettingsManager();
 	private readonly _appStateManager = new AppStateManager();
 	private _hasActivePreviewClearTimer: ReturnType<typeof setTimeout> | undefined;
@@ -317,6 +319,25 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 		return this._activePreview;
 	}
 
+	public get activeViewer(): IViewerCommandTarget | undefined {
+		return this._activeViewer;
+	}
+
+	/**
+	 * Make a viewer that is not an image preview the target of shared commands
+	 * while its tab is in front. Like image previews, it keeps that role when
+	 * focus leaves for a QuickPick, and hands it back when its tab closes.
+	 */
+	public registerViewer(target: IViewerCommandTarget, panel: vscode.WebviewPanel): void {
+		this._activeViewer = target;
+		panel.onDidChangeViewState(() => {
+			if (panel.active) { this._activeViewer = target; }
+		});
+		panel.onDidDispose(() => {
+			if (this._activeViewer === target) { this._activeViewer = this._activePreview; }
+		});
+	}
+
 	public getPreviewFor(resource: vscode.Uri, viewColumn?: vscode.ViewColumn): IImagePreview | undefined {
 		for (const preview of this._previews) {
 			if (preview.resource.toString() === resource.toString()) {
@@ -329,7 +350,9 @@ export class ImagePreviewManager implements vscode.CustomReadonlyEditorProvider,
 	}
 
 	private setActivePreview(value: IImagePreview | undefined): void {
+		const previous = this._activePreview;
 		this._activePreview = value;
+		if (value || this._activeViewer === previous) { this._activeViewer = value; }
 
 		// When switching to a new preview, load its format settings into AppStateManager
 		if (value && 'getCurrentFormat' in value) {

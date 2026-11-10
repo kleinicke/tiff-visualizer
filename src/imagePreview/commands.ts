@@ -1642,7 +1642,13 @@ export function registerImagePreviewCommands(
 	disposables.push(vscode.commands.registerCommand('tiffVisualizer.toggleScaleBar', () => {
 		logCommand('toggleScaleBar', 'start');
 		try {
-			previewManager.activePreview?.toggleScaleBar();
+			const viewer = previewManager.activeViewer;
+			if (viewer && !viewer.toggleScaleBar) {
+				vscode.window.showInformationMessage('The viewer in front has no scale bar.');
+				logCommand('toggleScaleBar', 'error', 'Not supported by the active viewer');
+				return;
+			}
+			viewer?.toggleScaleBar?.();
 			logCommand('toggleScaleBar', 'success');
 		} catch (error) {
 			logCommand('toggleScaleBar', 'error', String(error));

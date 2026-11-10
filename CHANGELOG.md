@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Add a Xenium viewer with image channels, cell outlines and gene transcripts.
+- Add a scale bar to the Xenium viewer and make Toggle Scale Bar work there.
 - Add cell overlays to ordinary images using TIFF label masks or Parquet boundaries, with CSV/TSV measurement tables.
 - Add channel and gene groups, and improve multichannel image controls.
 - Add optional scroll-to-zoom and drag-to-pan controls.

@@ -11,7 +11,8 @@ import {
 } from './geometry.js';
 import type { RoiManager } from './roi-manager.js';
 import { brushStroke, gradientMagnitude, growRegion, growRegionAuto, traceBoundary } from './segmentation.js';
-import { chooseScaleBarLength, formatNumber } from './calibration.js';
+import { formatNumber } from './calibration.js';
+import { ScaleBarControl, type ScaleBarPosition } from '../scale-bar.js';
 import {
 	isAreaKind,
 	isLineKind,
@@ -56,11 +57,7 @@ export interface OverlayHost {
 	onScaleBarPositionChanged?: () => void;
 }
 
-export interface ScaleBarPosition {
-	/** Viewport-relative left edge and baseline, both in the range 0..1. */
-	x: number;
-	y: number;
-}
+export type { ScaleBarPosition } from '../scale-bar.js';
 
 /**
  * A binary segmentation result painted over the image.
@@ -117,7 +114,7 @@ const HIT_TOLERANCE_SCREEN = 6;
 export class RoiOverlay {
 	private canvas: HTMLCanvasElement;
 	private ctx: CanvasRenderingContext2D | null;
-	private scaleBarHandle: HTMLDivElement;
+	private scaleBar: ScaleBarControl;
 	private manager: RoiManager;
 	private host: OverlayHost;
 
@@ -135,9 +132,6 @@ export class RoiOverlay {
 	private brushRadius = 8;
 	private wandTolerance: number | null = null;
 	private showScaleBar = true;
-	/** Null keeps the automatic lower-left placement; a value is viewport-relative. */
-	private scaleBarPosition: ScaleBarPosition | null = null;
-	private scaleBarDragOffset: { x: number; y: number } | null = null;
 	/**
 	 * Keep the scale bar on screen while the measurement panel is closed.
 	 *
@@ -174,10 +168,10 @@ export class RoiOverlay {
 		this.canvas.style.display = 'none';
 		this.ctx = this.canvas.getContext('2d');
 		document.body.appendChild(this.canvas);
-		this.scaleBarHandle = document.createElement('div');
-		this.scaleBarHandle.className = 'measure-scale-bar-handle';
-		this.scaleBarHandle.title = 'Drag to move the scale bar; double-click to restore automatic placement';
-		document.body.appendChild(this.scaleBarHandle);
+		this.scaleBar = new ScaleBarControl({
+			onMove: () => this.scheduleRedraw(),
+			onChange: () => this.host.onScaleBarPositionChanged?.(),
+		});
 
 		this.manager.onChange(event => {
 			this.scheduleRedraw();
@@ -207,23 +201,13 @@ export class RoiOverlay {
 		this.canvas.addEventListener('dblclick', e => this.onDoubleClick(e));
 		this.canvas.addEventListener('contextmenu', e => this.onContextMenu(e));
 		this.canvas.addEventListener('wheel', e => this.onWheel(e), { passive: false });
-		this.scaleBarHandle.addEventListener('mousedown', e => this.beginScaleBarDrag(e));
-		this.scaleBarHandle.addEventListener('dblclick', e => {
-			e.preventDefault();
-			e.stopPropagation();
-			this.resetScaleBarPosition();
-		});
-		window.addEventListener('mousemove', this.moveScaleBar);
-		window.addEventListener('mouseup', this.endScaleBarDrag);
 	}
 
 	dispose(): void {
 		window.removeEventListener('scroll', this.boundRedraw, true);
 		window.removeEventListener('resize', this.boundRedraw);
-		window.removeEventListener('mousemove', this.moveScaleBar);
-		window.removeEventListener('mouseup', this.endScaleBarDrag);
 		this.canvas.remove();
-		this.scaleBarHandle.remove();
+		this.scaleBar.dispose();
 	}
 
 	// --- configuration ------------------------------------------------------
@@ -271,25 +255,14 @@ export class RoiOverlay {
 
 	getShowScaleBar(): boolean { return this.showScaleBar; }
 
-	getScaleBarPosition(): ScaleBarPosition | null {
-		return this.scaleBarPosition ? { ...this.scaleBarPosition } : null;
-	}
+	/** Null keeps the automatic lower-left placement; a value is viewport-relative. */
+	getScaleBarPosition(): ScaleBarPosition | null { return this.scaleBar.getPosition(); }
 
-	setScaleBarPosition(position: ScaleBarPosition | null): void {
-		this.scaleBarPosition = position && Number.isFinite(position.x) && Number.isFinite(position.y)
-			? { x: Math.max(0, Math.min(1, position.x)), y: Math.max(0, Math.min(1, position.y)) }
-			: null;
-		this.scheduleRedraw();
-	}
+	setScaleBarPosition(position: ScaleBarPosition | null): void { this.scaleBar.setPosition(position); }
 
-	hasCustomScaleBarPosition(): boolean { return this.scaleBarPosition !== null; }
+	hasCustomScaleBarPosition(): boolean { return this.scaleBar.hasCustomPosition(); }
 
-	resetScaleBarPosition(): void {
-		if (!this.scaleBarPosition) { return; }
-		this.scaleBarPosition = null;
-		this.host.onScaleBarPositionChanged?.();
-		this.scheduleRedraw();
-	}
+	resetScaleBarPosition(): void { this.scaleBar.reset(); }
 
 	/** Toggle the idle (panel-closed) scale bar; returns the new state. */
 	toggleScaleBar(): boolean {
@@ -479,7 +452,7 @@ export class RoiOverlay {
 
 	redraw(): void {
 		if (!this.ctx) { return; }
-		this.scaleBarHandle.style.display = 'none';
+		this.scaleBar.hideHandle();
 		// The calibration can change under us (a new image, a manual edit), so
 		// visibility is settled here rather than only at the call sites that
 		// change it.
@@ -901,81 +874,17 @@ export class RoiOverlay {
 	}
 
 	private drawScaleBar(ctx: CanvasRenderingContext2D, rect: DOMRect): void {
-		const calibration = this.host.getCalibration();
-		const natural = this.naturalSize();
-		if (!natural) { return; }
-		const visibleWidth = Math.min(rect.width, window.innerWidth) / this.pixelScale();
-		const bar = chooseScaleBarLength(visibleWidth, calibration);
-		if (!bar) { return; }
-
-		const lengthOnScreen = bar.lengthPixels * this.pixelScale();
-		if (!(lengthOnScreen > 20) || lengthOnScreen > window.innerWidth * 0.6) { return; }
-
-		// Browser hosts can reserve fixed chrome at the bottom of the viewport.
-		// The VS Code webview leaves this variable unset, so its placement stays
-		// unchanged, while the standalone site keeps the bar above its status bar.
-		const configuredInset = Number.parseFloat(getComputedStyle(document.documentElement)
-			.getPropertyValue('--measure-scale-bar-bottom-inset'));
-		const bottomInset = Number.isFinite(configuredInset) ? Math.max(0, configuredInset) : 0;
-		const visibleBottom = window.innerHeight - bottomInset;
-		const edge = 8;
-		const automaticX = Math.max(rect.left, 0) + 16;
-		const automaticY = Math.min(rect.bottom, visibleBottom) - 22;
-		const requestedX = this.scaleBarPosition ? this.scaleBarPosition.x * window.innerWidth : automaticX;
-		const requestedY = this.scaleBarPosition ? this.scaleBarPosition.y * visibleBottom : automaticY;
-		const x = Math.max(edge, Math.min(window.innerWidth - lengthOnScreen - edge, requestedX));
-		const y = Math.max(20, Math.min(visibleBottom - edge, requestedY));
-
-		ctx.save();
-		ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-		ctx.fillRect(x - 6, y - 16, lengthOnScreen + 12, 30);
-		ctx.strokeStyle = '#ffffff';
-		ctx.fillStyle = '#ffffff';
-		ctx.lineWidth = 3;
-		ctx.beginPath();
-		ctx.moveTo(x, y);
-		ctx.lineTo(x + lengthOnScreen, y);
-		ctx.stroke();
-		ctx.font = '11px var(--vscode-editor-font-family, monospace)';
-		ctx.textAlign = 'center';
-		ctx.fillText(bar.label, x + lengthOnScreen / 2, y - 5);
-		ctx.restore();
-
-		this.scaleBarHandle.style.left = `${x - 6}px`;
-		this.scaleBarHandle.style.top = `${y - 16}px`;
-		this.scaleBarHandle.style.width = `${lengthOnScreen + 12}px`;
-		this.scaleBarHandle.style.height = '30px';
-		this.scaleBarHandle.style.display = 'block';
+		if (!this.naturalSize()) { return; }
+		// Browser hosts can reserve fixed chrome at the bottom of the viewport
+		// through --measure-scale-bar-bottom-inset; the VS Code webview leaves it
+		// unset, so its placement is unchanged.
+		this.scaleBar.draw(ctx, {
+			visibleWidth: Math.min(rect.width, window.innerWidth) / this.pixelScale(),
+			pixelScale: this.pixelScale(),
+			calibration: this.host.getCalibration(),
+			area: { left: rect.left, bottom: rect.bottom },
+		});
 	}
-
-	private beginScaleBarDrag(event: MouseEvent): void {
-		if (event.button !== 0) { return; }
-		const bounds = this.scaleBarHandle.getBoundingClientRect();
-		this.scaleBarDragOffset = { x: event.clientX - (bounds.left + 6), y: event.clientY - (bounds.top + 16) };
-		event.preventDefault();
-		event.stopPropagation();
-	}
-
-	private moveScaleBar = (event: MouseEvent): void => {
-		if (!this.scaleBarDragOffset) { return; }
-		const configuredInset = Number.parseFloat(getComputedStyle(document.documentElement)
-			.getPropertyValue('--measure-scale-bar-bottom-inset'));
-		const bottomInset = Number.isFinite(configuredInset) ? Math.max(0, configuredInset) : 0;
-		const visibleBottom = Math.max(1, window.innerHeight - bottomInset);
-		const x = event.clientX - this.scaleBarDragOffset.x;
-		const y = event.clientY - this.scaleBarDragOffset.y;
-		this.scaleBarPosition = {
-			x: Math.max(0, Math.min(1, x / Math.max(1, window.innerWidth))),
-			y: Math.max(0, Math.min(1, y / visibleBottom)),
-		};
-		this.scheduleRedraw();
-	};
-
-	private endScaleBarDrag = (): void => {
-		if (!this.scaleBarDragOffset) { return; }
-		this.scaleBarDragOffset = null;
-		this.host.onScaleBarPositionChanged?.();
-	};
 
 	private strokePath(ctx: CanvasRenderingContext2D, points: number[], close: boolean): void {
 		ctx.beginPath();

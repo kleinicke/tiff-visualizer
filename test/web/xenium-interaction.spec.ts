@@ -22,6 +22,41 @@ async function open(page: Page, enabled: boolean) {
 const camera = (page: Page) => page.evaluate(() => (window as any).scene.currentCamera);
 async function settle(page: Page) { await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))); }
 
+test('Xenium scale bar follows the zoom, hides, moves and stays clear of the readout', async ({ page }) => {
+  await open(page, false);
+  await page.addStyleTag({ content: readFileSync(path.join(root, 'media/imagePreview.css'), 'utf8') });
+  await settle(page);
+  const handle = page.locator('.measure-scale-bar-handle');
+  const white = async (x: number, y: number) => page.evaluate(([px, py]) => Array.from((document.querySelector('.scene-canvas') as HTMLCanvasElement).getContext('2d')!.getImageData(px, py, 1, 1).data).slice(0, 3).join(), [x, y]);
+  await expect(handle).toBeVisible();
+  const box = (await handle.boundingBox())!;
+  expect(await white(Math.round(box.x + box.width / 2), Math.round(box.y + 16))).toBe('255,255,255');
+  const hud = (await page.locator('.scene-hud').boundingBox())!;
+  expect(box.y + box.height).toBeLessThanOrEqual(hud.y);
+
+  await page.evaluate(() => (window as any).scene.setCamera({ scale: 2, x: -300, y: -300 }));
+  await settle(page);
+  const zoomed = (await handle.boundingBox())!;
+  expect(zoomed.width).toBeLessThan(box.width * 4);
+  expect(zoomed.width).not.toBe(box.width);
+
+  await page.mouse.move(zoomed.x + zoomed.width / 2, zoomed.y + 16); await page.mouse.down();
+  await page.mouse.move(zoomed.x + zoomed.width / 2 + 40, zoomed.y - 120, { steps: 6 }); await page.mouse.up();
+  await settle(page);
+  expect(await page.evaluate(() => (window as any).scene.hasCustomScaleBarPosition())).toBe(true);
+  expect((await handle.boundingBox())!.y).toBeLessThan(zoomed.y - 80);
+  await page.evaluate(() => (window as any).scene.resetScaleBarPosition());
+  await settle(page);
+  expect((await handle.boundingBox())!.y).toBeCloseTo(zoomed.y, 0);
+
+  await page.evaluate(() => (window as any).scene.setShowScaleBar(false));
+  await settle(page);
+  await expect(handle).toBeHidden();
+  await page.evaluate(() => (window as any).scene.setShowScaleBar(true));
+  await settle(page);
+  await expect(handle).toBeVisible();
+});
+
 for (const enabled of [false, true]) {
   test(`Xenium clicks and dragging respect scrollToZoom=${enabled}`, async ({ page }) => {
     await open(page, enabled);

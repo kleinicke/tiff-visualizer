@@ -17,6 +17,21 @@ export interface LayerExportResult {
 	error?: string;
 }
 
+/**
+ * What a command can ask of whichever viewer is in front. Every member is
+ * optional: a viewer implements the commands that make sense for it, and a
+ * command reports when the front viewer does not.
+ */
+export interface IViewerCommandTarget {
+	toggleScaleBar?(): void;
+}
+
+/** What a viewer that is not an image preview needs from the manager: session settings and a way to become the command target. */
+export interface IViewerRegistry {
+	readonly settingsManager: Pick<ImageSettingsManager, 'getShowScaleBar' | 'toggleScaleBar' | 'onDidChangeSettings'>;
+	registerViewer(target: IViewerCommandTarget, panel: vscode.WebviewPanel): void;
+}
+
 export interface IImagePreviewManager {
 	readonly settingsManager: ImageSettingsManager;
 	readonly appStateManager: AppStateManager;
@@ -36,7 +51,7 @@ export interface IImagePreviewManager {
 	refreshActiveMode(): void;
 }
 
-export interface IImagePreview {
+export interface IImagePreview extends IViewerCommandTarget {
 	readonly resource: vscode.Uri;
 	readonly viewColumn: vscode.ViewColumn | undefined;
 	updatePreview(): void;
