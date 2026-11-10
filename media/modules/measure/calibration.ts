@@ -91,6 +91,28 @@ export function calibrationFromTiffTags(ifd: Record<string, unknown> | null | un
 	};
 }
 
+const NUMBER = '[+-]?\\d+(?:\\.\\d+)?(?:e[+-]?\\d+)?';
+const FRACTION = new RegExp(`^\\s*(${NUMBER})\\s*/\\s*(${NUMBER})(?=\\s|$|\\()`, 'i');
+
+/**
+ * The number in a tag value as the tag list prints it. The Rust decoder writes
+ * rationals as "1970051/1000000 (1.970051)": the exact fraction, then a
+ * rounded decimal, so the fraction is the one to read. "300, 1" (numerator,
+ * denominator) and plain numbers are the other shapes in use.
+ */
+function tagTextNumber(text: string): number | undefined {
+	const fraction = FRACTION.exec(text);
+	if (fraction) {
+		const denominator = parseFloat(fraction[2]);
+		return denominator !== 0 ? parseFloat(fraction[1]) / denominator : undefined;
+	}
+	const parts = text.split(',').map(part => parseFloat(part.trim()));
+	if (parts.length >= 2 && Number.isFinite(parts[0]) && Number.isFinite(parts[1]) && parts[1] !== 0) {
+		return parts[0] / parts[1];
+	}
+	return Number.isFinite(parts[0]) ? parts[0] : undefined;
+}
+
 /**
  * Derive calibration from the flat tag list the metadata panel already builds.
  *
@@ -106,13 +128,8 @@ export function calibrationFromTagList(
 	const find = (pattern: RegExp): number | undefined => {
 		for (const tag of tags) {
 			if (!tag?.name || !pattern.test(String(tag.name))) { continue; }
-			const text = String(tag.value ?? '').trim();
-			// Rationals stringify as "300, 1" via the shared tag formatter.
-			const parts = text.split(',').map(part => parseFloat(part.trim()));
-			if (parts.length >= 2 && Number.isFinite(parts[0]) && Number.isFinite(parts[1]) && parts[1] !== 0) {
-				return parts[0] / parts[1];
-			}
-			if (Number.isFinite(parts[0])) { return parts[0]; }
+			const value = tagTextNumber(String(tag.value ?? '').trim());
+			if (value !== undefined) { return value; }
 		}
 		return undefined;
 	};

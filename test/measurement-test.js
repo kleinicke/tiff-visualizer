@@ -974,6 +974,23 @@ async function main() {
 		assert.strictEqual(fromList.unit, '\u00B5m');
 	});
 
+	await test('rational resolution tags are read as the decoder prints them', () => {
+		const description = 'ImageJ=1.53v\nimages=41\nchannels=41\nmode=color\nunit=\\u00B5m\nspacing=NaN\n';
+		const tags = (x, unit = '1') => [
+			{ tag: 282, name: 'XResolution', value: x }, { tag: 283, name: 'YResolution', value: x },
+			{ tag: 296, name: 'ResolutionUnit', value: unit }, { tag: 270, name: 'ImageDescription', value: description },
+		];
+		const real = calibration.calibrationFromTagList(tags('1970051/1000000 (1.970051)'));
+		close(real.pixelWidth, 1 / 1.970051, 1e-12, 'pixel width from "N/D (x)"');
+		assert.strictEqual(real.unit, '\u00B5m');
+		assert.strictEqual(calibration.chooseScaleBarLength(1856, real).label, '200 \u00B5m', 'a 1856 px wide image gets a sensible bar');
+		assert.strictEqual(calibration.calibrationFromTagList(tags('1/3 (0.333333)')).pixelWidth, 3, 'the exact fraction wins over its rounded decimal');
+		close(calibration.calibrationFromTagList(tags('4, 1')).pixelWidth, 0.25, 1e-12, 'the "num, den" form still works');
+		close(calibration.calibrationFromTagList(tags('4')).pixelWidth, 0.25, 1e-12, 'a plain number still works');
+		close(calibration.calibrationFromTagList(tags('1970051/1000000 (1.970051), 5/1 (5.000000)')).pixelWidth, 1 / 1.970051, 1e-12, 'the first of several values');
+		assert.strictEqual(calibration.calibrationFromTagList(tags('5/0')), null, 'a zero denominator is not a scale');
+	});
+
 	await test('OME physical sizes win over resolution tags', () => {
 		const result = calibration.autoCalibration(
 			{ physicalSizeX: 0.325, physicalSizeY: 0.325, physicalSizeXUnit: 'µm' },
