@@ -366,6 +366,10 @@ export class ZoomController {
 		let moved = false;
 		this.container.classList.add('panning');
 		let capturedId: number | null = null;
+		// Capture on the element that was pressed, not an ancestor: a captured pointer retargets the
+		// click and double-click that follow to the capturing element, and double-click fits only
+		// when it lands on the image.
+		let captureTarget: Element = this.container;
 		const move = (e: MouseEvent) => {
 			// A release outside the webview is never delivered to it. The next move
 			// then arrives with no button down, which is the only sign the drag ended.
@@ -381,8 +385,8 @@ export class ZoomController {
 			window.removeEventListener('mouseup', up, true);
 			window.removeEventListener('blur', up);
 			if (capturedId !== null) {
-				this.container.removeEventListener('lostpointercapture', up);
-				if (this.container.hasPointerCapture(capturedId)) { this.container.releasePointerCapture(capturedId); }
+				captureTarget.removeEventListener('lostpointercapture', up);
+				if (captureTarget.hasPointerCapture(capturedId)) { captureTarget.releasePointerCapture(capturedId); }
 			}
 			this.endPan = null;
 			this.container.classList.remove('panning');
@@ -392,9 +396,10 @@ export class ZoomController {
 		// As in the Xenium scene, capture ends the drag if it is taken away.
 		if (pointerId !== null) {
 			try {
-				this.container.setPointerCapture(pointerId);
+				captureTarget = (event.target as Element | null) ?? this.container;
+				captureTarget.setPointerCapture(pointerId);
 				capturedId = pointerId;
-				this.container.addEventListener('lostpointercapture', up);
+				captureTarget.addEventListener('lostpointercapture', up);
 			} catch { /* the pointer is no longer active: fall back to window events */ }
 		}
 		window.addEventListener('mousemove', move, true);
