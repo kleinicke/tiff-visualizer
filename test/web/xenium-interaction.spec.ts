@@ -87,3 +87,33 @@ test('live Xenium mode change cancels dragging and gates double-click fit', asyn
   await expect.poll(async () => (await camera(page)).scale).toBeLessThan(1);
   await settle(page);
 });
+
+// A release outside the webview reaches neither pointerup nor pointercancel. The next move has no
+// button down, which is the only sign the drag ended; pointer capture is not guaranteed to survive it.
+test('Xenium drag ends when the release is missed', async ({ page }) => {
+  await open(page, true);
+  await page.evaluate(() => (window as any).scene.setCamera({ scale: 2, x: -600, y: -500 }));
+  await page.mouse.move(400, 300); await page.mouse.down(); await page.mouse.move(440, 320, { steps: 4 });
+  const dragged = await camera(page);
+  expect(dragged.x).not.toBe(-600);
+  await page.evaluate(() => {
+    const canvas = document.querySelector('#scene-root canvas') as HTMLCanvasElement;
+    canvas.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 500, clientY: 380, buttons: 0, bubbles: true }));
+    canvas.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, clientX: 560, clientY: 420, buttons: 0, bubbles: true }));
+  });
+  expect(await camera(page)).toEqual(dragged);
+  expect(await page.evaluate(() => document.querySelector('#scene-root canvas')!.classList.contains('dragging'))).toBe(false);
+  expect(await page.evaluate(() => (window as any).clicks)).toBe(0);
+  await page.mouse.up();
+});
+
+test('Xenium drag ends when pointer capture is lost', async ({ page }) => {
+  await open(page, true);
+  await page.evaluate(() => (window as any).scene.setCamera({ scale: 2, x: -600, y: -500 }));
+  await page.mouse.move(400, 300); await page.mouse.down(); await page.mouse.move(440, 320, { steps: 4 });
+  const dragged = await camera(page);
+  await page.evaluate(() => (document.querySelector('#scene-root canvas') as HTMLCanvasElement).dispatchEvent(new PointerEvent('lostpointercapture', { pointerId: 1 })));
+  await page.mouse.move(520, 400);
+  expect(await camera(page)).toEqual(dragged);
+  await page.mouse.up();
+});

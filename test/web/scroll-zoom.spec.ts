@@ -199,3 +199,21 @@ test('disabling clears translation after scrolling into displaced image overflow
   await setting(page, false);
   expect(await image(page).evaluate(element => element.style.translate)).toBe('');
 });
+
+test('drag-pan ends when the release is missed', async ({ page }) => {
+  await open(page, true);
+  await scale(page, 4);
+  const before = await rect(page);
+  await page.mouse.move(600, 350); await page.mouse.down(); await page.mouse.move(640, 380, { steps: 6 });
+  const dragged = await rect(page);
+  expect(dragged.x).not.toBe(before.x);
+  // The button was released outside the window, so no mouseup arrived; the next move has no button down.
+  await page.evaluate(() => {
+    window.dispatchEvent(new MouseEvent('mousemove', { clientX: 700, clientY: 420, buttons: 0, bubbles: true }));
+    window.dispatchEvent(new MouseEvent('mousemove', { clientX: 760, clientY: 450, buttons: 0, bubbles: true }));
+  });
+  await settle(page);
+  expect(await rect(page)).toEqual(dragged);
+  expect(await page.evaluate(() => document.body.classList.contains('panning'))).toBe(false);
+  await page.mouse.up();
+});

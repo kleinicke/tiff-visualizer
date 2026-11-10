@@ -361,6 +361,9 @@ export class ZoomController {
 		let moved = false;
 		this.container.classList.add('panning');
 		const move = (e: MouseEvent) => {
+			// A release outside the webview is never delivered to it. The next move
+			// then arrives with no button down, which is the only sign the drag ended.
+			if (e.buttons === 0) { up(); return; }
 			if (!moved && Math.hypot(e.clientX - event.clientX, e.clientY - event.clientY) < ZoomController.DRAG_THRESHOLD) { return; }
 			moved = true;
 			const dx = e.clientX - last.x, dy = e.clientY - last.y;
