@@ -1037,6 +1037,23 @@ async function main() {
 		assert.strictEqual(calibration.calibrationFromDicom({ pixelSpacing: 'n/a\\n/a' }), null);
 	});
 
+	await test('numbers keep the zeros that are part of their value', () => {
+		for (const [value, text] of [[1000, '1000'], [2000, '2000'], [10000, '10000'], [500000, '500000'], [100, '100'], [10, '10'], [0.5, '0.5'], [0.25, '0.25'], [1.5, '1.5'], [0, '0'], [-2000, '-2000'], [12.3456, '12.35']]) {
+			assert.strictEqual(calibration.formatNumber(value), text, `formatNumber(${value})`);
+		}
+		assert.strictEqual(calibration.formatNumber(2000, 6), '2000');
+		assert.strictEqual(calibration.formatNumber(100000, 6), '100000');
+	});
+
+	await test('a zoomed-out scale bar keeps its magnitude (ImageJ 1.97 pixels per micron)', () => {
+		const cal = calibration.calibrationFromTiffTags({ t282: 1.97, t283: 1.97, t296: 1, t270: 'ImageJ=1.54f\nunit=um\n' });
+		assert.ok(Math.abs(cal.pixelWidth - 1 / 1.97) < 1e-12);
+		const labels = [[1000, '100 um'], [5000, '500 um'], [10000, '1000 um'], [20000, '2000 um'], [100000, '10000 um']];
+		for (const [visible, label] of labels) {
+			assert.strictEqual(calibration.chooseScaleBarLength(visible, cal).label, label, `${visible} px visible`);
+		}
+	});
+
 	await test('the scale bar picks a round number', () => {
 		const bar = calibration.chooseScaleBarLength(
 			1000, { pixelWidth: 0.5, pixelHeight: 0.5, unit: 'µm', origin: 'manual' }, 0.2);

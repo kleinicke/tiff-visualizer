@@ -301,7 +301,9 @@ export function formatNumber(value: number, digits = 4): string {
 	// Show enough digits to distinguish neighbouring pixels at any scale, but
 	// never so many that the table becomes unreadable.
 	const decimals = Math.max(0, digits - Math.max(1, Math.floor(Math.log10(magnitude)) + 1));
-	return value.toFixed(decimals).replace(/\.?0+$/, '') || '0';
+	const text = value.toFixed(decimals);
+	// Trailing zeros are only insignificant after a decimal point: "1000" must stay "1000".
+	return (text.includes('.') ? text.replace(/\.?0+$/, '') : text) || '0';
 }
 
 /**
