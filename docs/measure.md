@@ -235,8 +235,8 @@ Set `tiffVisualizer.scaleBar.anchorToImage` to anchor the bar to the *image* ins
 starts at the image's bottom left, kept inside the viewer. A bar you drag elsewhere is pinned
 to that place in the image and moves off screen with it as you pan and zoom; drop it back on
 the image's bottom-left corner and it snaps into place and is kept on screen again. The
-setting is off by default and applies to image previews; the Xenium viewer keeps the bar in
-the viewer.
+setting is off by default and applies to image previews and to the Xenium viewer, where the
+image is the tissue.
 
 **Toggle Scale Bar** (command palette) turns it off and on; the *Show scale bar*
 checkbox under **Overlay** is the same switch.

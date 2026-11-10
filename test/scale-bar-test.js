@@ -25,7 +25,7 @@ function testRoundLengthAndAutomaticPlacement() {
 	const placed = placeScaleBar(base);
 	assert.equal(placed.label, '200 µm', 'a 1-2-5 length near a fifth of the width, in the calibrated unit');
 	assert.equal(placed.length, 400, 'its length on screen is the physical length over the pixel size');
-	assert.deepEqual([placed.x, placed.y], [16, 778], 'it sits in the lower-left corner of the viewer');
+	assert.deepEqual([placed.x, placed.y], [16, 784], 'it sits in the lower-left corner of the viewer');
 }
 
 function testUncalibratedAndOversizedBarsAreNotDrawn() {
@@ -35,20 +35,20 @@ function testUncalibratedAndOversizedBarsAreNotDrawn() {
 }
 
 function testAutomaticPlacementIsAnchoredToTheViewerNotTheImage() {
-	assert.deepEqual(['x', 'y'].map(key => placeScaleBar({ ...base, visibleWidth: 4000, pixelScale: 0.25 })[key]), [16, 778],
+	assert.deepEqual(['x', 'y'].map(key => placeScaleBar({ ...base, visibleWidth: 4000, pixelScale: 0.25 })[key]), [16, 784],
 		'zooming changes the bar but not where it sits');
-	assert.equal(placeScaleBar({ ...base, bottomClearance: 26 }).y, 752, 'a viewer can keep room for its own readout');
+	assert.equal(placeScaleBar({ ...base, bottomClearance: 26 }).y, 758, 'a viewer can keep room for its own readout');
 }
 
 function testBottomInsetKeepsTheBarAboveHostChrome() {
-	assert.equal(placeScaleBar({ ...base, bottomInset: 28 }).y, 750, 'the site reserves its status bar height');
+	assert.equal(placeScaleBar({ ...base, bottomInset: 28 }).y, 756, 'the site reserves its status bar height');
 }
 
 function testCustomPositionIsViewportRelativeAndClamped() {
 	const middle = placeScaleBar({ ...base, position: { x: 0.5, y: 0.5 } });
 	assert.deepEqual([middle.x, middle.y], [500, 400]);
 	const corner = placeScaleBar({ ...base, position: { x: 1, y: 1 } });
-	assert.deepEqual([corner.x, corner.y], [592, 792], 'the bar stays fully inside the viewport');
+	assert.deepEqual([corner.x, corner.y], [600, 800], 'the bar stays fully inside the viewport');
 }
 
 function testPositionsAreSanitised() {
@@ -63,24 +63,25 @@ const rect = { left: 100, top: 50, width: 600, height: 400 };
 function testAnchoredToImageStartsAtTheImageBottomAndStaysInTheViewer() {
 	const anchored = { ...base, anchorToImage: true };
 	const placed = placeScaleBar({ ...anchored, imageRect: rect });
-	assert.deepEqual([placed.x, placed.y], [116, 426], 'lower-left of the image: a 10 px gap to the corner on both sides of the dark box');
-	assert.deepEqual([placeScaleBar({ ...base, imageRect: rect }).x, placeScaleBar({ ...base, imageRect: rect }).y], [16, 778], 'off: the viewer corner wherever the image is');
+	assert.deepEqual([placed.x, placed.y], [106, 441], 'the dark box sits flush in the lower-left corner of the image');
+	assert.deepEqual([placeScaleBar({ ...base, imageRect: rect }).x, placeScaleBar({ ...base, imageRect: rect }).y], [16, 784], 'off: the viewer corner wherever the image is');
 	const panned = placeScaleBar({ ...anchored, imageRect: { left: -300, top: 500, width: 1200, height: 900 } });
-	assert.deepEqual([panned.x, panned.y], [16, 778], 'an image running past the viewer keeps the bar inside the viewport');
-	assert.equal(placeScaleBar({ ...anchored, imageRect: rect, bottomClearance: 26 }).y, 400);
+	assert.deepEqual([panned.x, panned.y], [6, 784], 'an image running past the viewer keeps the bar inside the viewport');
+	assert.equal(placeScaleBar({ ...anchored, imageRect: rect, bottomClearance: 26 }).y, 441,
+		'a viewer readout does not lift the bar off an image that ends above it');
+	assert.equal(placeScaleBar({ ...anchored, imageRect: { ...rect, top: 400 }, bottomClearance: 26 }).y, 758,
+		'but once the image reaches the viewer bottom the bar stays above the readout');
 }
 
 function testTheBarKeepsItsPlaceAtTheImageCornerWhateverTheZoom() {
 	const gaps = size => {
 		const image = { left: 300, top: 100, width: size, height: size * 0.75 };
 		const placed = placeScaleBar({ ...base, visibleWidth: 2000, pixelScale: 0.25, anchorToImage: true, imageRect: image });
-		return [placed.x - 6 - image.left, image.top + image.height - (placed.y + 14)];
+		return [placed.x - 6 - image.left, image.top + image.height - (placed.y + 9)];
 	};
-	assert.deepEqual(gaps(800), [10, 10], 'a large image: a fixed gap, equal on both sides');
-	assert.deepEqual(gaps(400), [10, 10], 'unchanged down to the point where the image is 300 px tall');
-	const small = gaps(120);
-	assert.ok(small[0] < 10 && Math.abs(small[0] - small[1]) < 1e-9, 'a small image pulls the bar in rather than leaving it adrift');
-	assert.ok(gaps(20)[0] >= 3, 'but never onto the image edge');
+	for (const size of [800, 400, 120, 20]) {
+		assert.deepEqual(gaps(size), gaps(800), 'the gap to the image corner does not depend on the zoom');
+	}
 }
 
 function testAMovedImageAnchoredBarFollowsTheImage() {
@@ -100,9 +101,9 @@ function testAPinnedBarMayLeaveTheViewportButTheAutomaticOneNever() {
 	const away = placeScaleBar({ ...pinned, imageRect: { left: -900, top: -700, width: 600, height: 400 } });
 	assert.deepEqual([away.x, away.y], [-600, -500], 'panned out of view with the image');
 	const automatic = placeScaleBar({ ...base, anchorToImage: true, position: null, imageRect: { left: -900, top: -700, width: 600, height: 400 } });
-	assert.ok(automatic.x >= 8 && automatic.y >= 20 && automatic.y <= 792, 'the automatic bar is held inside the viewer');
+	assert.ok(automatic.x >= 0 && automatic.y >= 20 && automatic.y <= 800, 'the automatic bar is held inside the viewer');
 	const viewerFrame = placeScaleBar({ ...base, position: { x: 1, y: 1 } });
-	assert.deepEqual([viewerFrame.x, viewerFrame.y], [592, 792], 'viewer-anchored bars are still clamped');
+	assert.deepEqual([viewerFrame.x, viewerFrame.y], [600, 800], 'viewer-anchored bars are still clamped');
 }
 
 function testPositionsKeepTheirFrameWhenSanitised() {
@@ -176,11 +177,24 @@ function testDroppingTheBarOnTheImageCornerSnapsItBack() {
 		};
 		dragTo(300, 300);
 		assert.equal(control.hasCustomPosition(), true, 'away from the corner it stays where it is dropped');
-		dragTo(140, 445);
+		dragTo(130, 450);
 		assert.equal(control.hasCustomPosition(), false, 'close to the image corner it snaps back to automatic placement');
 		dragTo(200, 445);
 		assert.equal(control.hasCustomPosition(), true, 'further than the snap distance it does not');
 	});
+}
+
+function testXeniumViewerAnchorsToTheTissueImage() {
+	const scene = read('media/modules/scene/scene-viewer.ts');
+	assert.match(scene, /imageRect: \{ left: this\.camera\.x, top: this\.camera\.y, width: this\.scene\.width \* this\.camera\.scale, height: this\.scene\.height \* this\.camera\.scale \}/,
+		'the tissue image is the scene rectangle under the camera');
+	assert.match(scene, /anchorToImage: this\.anchorScaleBarToImage/);
+	const viewer = read('media/xenium-viewer.ts');
+	assert.equal((viewer.match(/setAnchorScaleBarToImage\(/g) || []).length, 2, 'startup and settings messages both apply it');
+	assert.match(viewer, /anchorScaleBarToImage: startup\.scaleBarAnchorToImage === true/);
+	const host = read('src/xenium/xeniumEditor.ts');
+	assert.match(host, /scaleBarAnchorToImage: this\.getScaleBarAnchorToImage\(\)/);
+	assert.match(host, /affectsConfiguration\('tiffVisualizer\.scaleBar\.anchorToImage'\)/);
 }
 
 function testChannelsPanelStopsAboveTheScaleBar() {
@@ -220,6 +234,7 @@ testDroppingTheBarOnTheImageCornerSnapsItBack();
 testPositionsKeepTheirFrameWhenSanitised();
 testSettingIsDeclaredAndReachesTheWebview();
 testDraggingWhileAnchoredToTheImageStoresAnImagePosition();
+testXeniumViewerAnchorsToTheTissueImage();
 testChannelsPanelStopsAboveTheScaleBar();
 testViewersShareTheModuleAndTheCommandUsesTheActiveViewer();
 console.log('Shared scale bar placement and routing passed.');

@@ -73,12 +73,17 @@ export function imageCornerInset(rect: { width: number; height: number }): numbe
 	return 0;
 }
 
-/** Left end and baseline of the bar when it rests in the lower-left corner of the image, not held inside the viewport. */
-export function imageRestingPoint(rect: ScaleBarImageRect, bottomClearance = 0): { x: number; y: number } {
+/**
+ * Left end and baseline of the bar when it rests in the lower-left corner of
+ * the image, not held inside the viewport. A viewer's bottom clearance does not
+ * apply here: it keeps the bar off the viewer's own readout, which only matters
+ * once the image reaches the bottom of the viewer.
+ */
+export function imageRestingPoint(rect: ScaleBarImageRect): { x: number; y: number } {
 	const inset = imageCornerInset(rect);
 	return {
 		x: rect.left + inset + SCALE_BAR_PAD_X,
-		y: rect.top + rect.height - bottomClearance - inset - (SCALE_BAR_HEIGHT - SCALE_BAR_PAD_TOP),
+		y: rect.top + rect.height - inset - (SCALE_BAR_HEIGHT - SCALE_BAR_PAD_TOP),
 	};
 }
 
@@ -129,7 +134,7 @@ export function placeScaleBar(input: ScaleBarInput): ScaleBarPlacement | null {
 	// while the image is panned and zoomed; only its length and label change.
 	// Anchored to the image, it starts at the image's lower-left corner instead,
 	// held inside the viewer.
-	const resting = anchored ? imageRestingPoint(rect, input.bottomClearance ?? 0) : null;
+	const resting = anchored ? imageRestingPoint(rect) : null;
 	const automaticX = resting ? resting.x + Math.max(0, -rect.left) : 16;
 	const automaticY = resting ? Math.min(resting.y, visibleBottom - (input.bottomClearance ?? 0) - 16) : visibleBottom - (input.bottomClearance ?? 0) - 16;
 	const frame: Frame = { rect, viewportWidth: input.viewportWidth, visibleBottom };
@@ -240,7 +245,7 @@ export class ScaleBarControl {
 			viewportWidth: window.innerWidth, viewportHeight: window.innerHeight, bottomInset,
 		});
 		this.anchorRect = input.anchorToImage ? usableRect(input.imageRect) : undefined;
-		this.restingPoint = this.anchorRect ? imageRestingPoint(this.anchorRect, input.bottomClearance ?? 0) : undefined;
+		this.restingPoint = this.anchorRect ? imageRestingPoint(this.anchorRect) : undefined;
 		if (!placement) { return; }
 		this.adoptFrame(placement, input.imageRect, window.innerWidth, window.innerHeight - bottomInset);
 		paintScaleBar(ctx, placement);

@@ -15,7 +15,7 @@ Controls follow `tiffVisualizer.scrollToZoom`, off by default, just like the ord
 - Off: the wheel scrolls the scene; Option (macOS) or Ctrl zooms about the view centre. Left-click selects cells; dragging does not pan.
 - On: the wheel zooms about the pointer, dragging pans, and double-click fits. A click still selects a cell without zooming.
 - Use **Scientific Image Visualizer: Toggle Scroll to Zoom** to switch the setting. Open Xenium viewers update immediately, including when the setting changes in Settings.
-- A scale bar is drawn at the lower left from the bundle's pixel size. **Scientific Image Visualizer: Toggle Scale Bar** and the right-click menu show or hide it; the choice is shared with the image viewer for the session. Drag the bar to move it and double-click it to restore the automatic placement.
+- A scale bar is drawn at the lower left from the bundle's pixel size. **Scientific Image Visualizer: Toggle Scale Bar** and the right-click menu show or hide it; the choice is shared with the image viewer for the session. Drag the bar to move it and double-click it to restore the automatic placement. With `tiffVisualizer.scaleBar.anchorToImage` on, the bar starts at the lower left of the tissue image and a bar you move stays at its place in the image; see [Measure](measure.md#the-scale-bar).
 - In either mode, `0` or **Fit to View** fits, `+`/`-` zoom, arrow keys pan, and `c` toggles the Channels panel. Trackpad pinch reported as Ctrl+wheel zooms in either mode.
 
 ## Current limits
