@@ -129,13 +129,13 @@ export function placeScaleBar(input: ScaleBarInput): ScaleBarPlacement | null {
 
 	const visibleBottom = input.viewportHeight - input.bottomInset;
 	const rect = usableRect(input.imageRect);
-	const anchored = input.anchorToImage && rect;
+	const anchoredRect = input.anchorToImage ? rect : undefined;
 	// By default the bar sits in the viewer's lower-left corner and stays there
 	// while the image is panned and zoomed; only its length and label change.
 	// Anchored to the image, it starts at the image's lower-left corner instead,
 	// held inside the viewer.
-	const resting = anchored ? imageRestingPoint(rect) : null;
-	const automaticX = resting ? resting.x + Math.max(0, -rect.left) : 16;
+	const resting = anchoredRect ? imageRestingPoint(anchoredRect) : null;
+	const automaticX = anchoredRect && resting ? resting.x + Math.max(0, -anchoredRect.left) : 16;
 	const automaticY = resting ? Math.min(resting.y, visibleBottom - (input.bottomClearance ?? 0) - 16) : visibleBottom - (input.bottomClearance ?? 0) - 16;
 	const frame: Frame = { rect, viewportWidth: input.viewportWidth, visibleBottom };
 	const placed = input.position ? toPixels(input.position, frame) : null;
