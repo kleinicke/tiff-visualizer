@@ -15,7 +15,6 @@ const base = {
 	visibleWidth: 2000,
 	pixelScale: 1,
 	calibration: { pixelWidth: 0.5, pixelHeight: 0.5, unit: 'µm', origin: 'imported' },
-	area: { left: 0, bottom: 800 },
 	position: null,
 	viewportWidth: 1000,
 	viewportHeight: 800,
@@ -26,13 +25,19 @@ function testRoundLengthAndAutomaticPlacement() {
 	const placed = placeScaleBar(base);
 	assert.equal(placed.label, '200 µm', 'a 1-2-5 length near a fifth of the width, in the calibrated unit');
 	assert.equal(placed.length, 400, 'its length on screen is the physical length over the pixel size');
-	assert.deepEqual([placed.x, placed.y], [16, 778], 'it sits in the lower-left corner of the image');
+	assert.deepEqual([placed.x, placed.y], [16, 778], 'it sits in the lower-left corner of the viewer');
 }
 
 function testUncalibratedAndOversizedBarsAreNotDrawn() {
 	assert.equal(placeScaleBar({ ...base, calibration: { ...base.calibration, origin: 'none' } }), null);
 	assert.equal(placeScaleBar({ ...base, viewportWidth: 500 }), null, 'a bar wider than 60% of the viewport is dropped');
 	assert.equal(placeScaleBar({ ...base, pixelScale: 0.01 }), null, 'a bar under 20 px is dropped');
+}
+
+function testAutomaticPlacementIsAnchoredToTheViewerNotTheImage() {
+	assert.deepEqual(['x', 'y'].map(key => placeScaleBar({ ...base, visibleWidth: 4000, pixelScale: 0.25 })[key]), [16, 778],
+		'zooming changes the bar but not where it sits');
+	assert.equal(placeScaleBar({ ...base, bottomClearance: 26 }).y, 752, 'a viewer can keep room for its own readout');
 }
 
 function testBottomInsetKeepsTheBarAboveHostChrome() {
@@ -63,6 +68,7 @@ function testViewersShareTheModuleAndTheCommandUsesTheActiveViewer() {
 
 testRoundLengthAndAutomaticPlacement();
 testUncalibratedAndOversizedBarsAreNotDrawn();
+testAutomaticPlacementIsAnchoredToTheViewerNotTheImage();
 testBottomInsetKeepsTheBarAboveHostChrome();
 testCustomPositionIsViewportRelativeAndClamped();
 testPositionsAreSanitised();

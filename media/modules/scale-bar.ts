@@ -18,12 +18,6 @@ export interface ScaleBarPosition {
 	y: number;
 }
 
-/** The visible image's left and bottom edges, in viewport pixels. */
-export interface ScaleBarArea {
-	left: number;
-	bottom: number;
-}
-
 export interface ScaleBarPlacement {
 	/** Left end of the bar and its baseline, in viewport pixels. */
 	x: number;
@@ -39,7 +33,8 @@ export interface ScaleBarInput {
 	/** Screen pixels per image pixel. */
 	pixelScale: number;
 	calibration: Calibration;
-	area: ScaleBarArea;
+	/** Space the viewer keeps free along the bottom edge for its own readout. Default 0. */
+	bottomClearance?: number;
 	position: ScaleBarPosition | null;
 	viewportWidth: number;
 	viewportHeight: number;
@@ -66,8 +61,10 @@ export function placeScaleBar(input: ScaleBarInput): ScaleBarPlacement | null {
 	if (!(length > 20) || length > input.viewportWidth * 0.6) { return null; }
 
 	const visibleBottom = input.viewportHeight - input.bottomInset;
-	const automaticX = Math.max(input.area.left, 0) + 16;
-	const automaticY = Math.min(input.area.bottom, visibleBottom) - 22;
+	// By default the bar sits in the viewer's lower-left corner and stays there
+	// while the image is panned and zoomed; only its length and label change.
+	const automaticX = 16;
+	const automaticY = visibleBottom - (input.bottomClearance ?? 0) - 22;
 	const requestedX = input.position ? input.position.x * input.viewportWidth : automaticX;
 	const requestedY = input.position ? input.position.y * visibleBottom : automaticY;
 	return {

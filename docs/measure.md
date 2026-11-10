@@ -223,8 +223,10 @@ A calibration you set by hand is never overwritten by a later automatic one.
 
 ### The scale bar
 
-Whenever an image is calibrated, a scale bar is drawn at the bottom left — and
-it stays there with this panel closed, as DICOM and microscopy viewers do. Its
+Whenever an image is calibrated, a scale bar is drawn at the bottom left of the viewer — and
+it stays there with this panel closed, as DICOM and microscopy viewers do. It does
+not move when you pan or zoom (drag it to place it elsewhere; double-click it to
+return it to the corner). Its
 length is always a round number (1, 2 or 5 × a power of ten) in the calibrated
 unit and it re-picks itself as you zoom, so it never has to be read off a
 fractional value. An uncalibrated image draws nothing.

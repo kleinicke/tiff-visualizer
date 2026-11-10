@@ -349,7 +349,7 @@ export class SceneViewer {
 			visibleWidth: this.viewWidth / this.camera.scale,
 			pixelScale: this.camera.scale,
 			calibration,
-			area: { left: 0, bottom: this.viewHeight - HUD_CLEARANCE },
+			bottomClearance: HUD_CLEARANCE,
 		});
 		context.restore();
 	}

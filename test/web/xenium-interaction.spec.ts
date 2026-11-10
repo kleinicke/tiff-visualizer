@@ -39,6 +39,10 @@ test('Xenium scale bar follows the zoom, hides, moves and stays clear of the rea
   const zoomed = (await handle.boundingBox())!;
   expect(zoomed.width).toBeLessThan(box.width * 4);
   expect(zoomed.width).not.toBe(box.width);
+  expect([zoomed.x, zoomed.y]).toEqual([box.x, box.y]);
+  await page.evaluate(() => (window as any).scene.setCamera({ scale: 2, x: -50, y: -700 }));
+  await settle(page);
+  expect(await handle.boundingBox()).toMatchObject({ x: zoomed.x, y: zoomed.y });
 
   await page.mouse.move(zoomed.x + zoomed.width / 2, zoomed.y + 16); await page.mouse.down();
   await page.mouse.move(zoomed.x + zoomed.width / 2 + 40, zoomed.y - 120, { steps: 6 }); await page.mouse.up();

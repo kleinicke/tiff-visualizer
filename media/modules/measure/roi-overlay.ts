@@ -882,7 +882,6 @@ export class RoiOverlay {
 			visibleWidth: Math.min(rect.width, window.innerWidth) / this.pixelScale(),
 			pixelScale: this.pixelScale(),
 			calibration: this.host.getCalibration(),
-			area: { left: rect.left, bottom: rect.bottom },
 		});
 	}
 
