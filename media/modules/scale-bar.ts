@@ -184,6 +184,12 @@ export interface ScaleBarHost {
 	onMove: () => void;
 	/** A drag ended or the position was reset: persist it. */
 	onChange: () => void;
+	/**
+	 * The wheel turned over the bar. A viewer whose wheel handler is not an
+	 * ancestor of the bar's handle passes it on, so zooming and scrolling work
+	 * with the cursor over the bar instead of stopping there.
+	 */
+	onWheel?: (event: WheelEvent) => void;
 }
 
 /**
@@ -205,6 +211,7 @@ export class ScaleBarControl {
 		this.handle.title = 'Drag to move the scale bar; double-click to restore automatic placement';
 		parent.appendChild(this.handle);
 		this.handle.addEventListener('mousedown', event => this.beginDrag(event));
+		this.handle.addEventListener('wheel', event => this.host.onWheel?.(event), { passive: false });
 		this.handle.addEventListener('dblclick', event => {
 			event.preventDefault();
 			event.stopPropagation();

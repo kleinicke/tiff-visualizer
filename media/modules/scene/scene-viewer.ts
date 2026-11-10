@@ -135,7 +135,7 @@ export class SceneViewer {
 		this.hud = document.createElement('div');
 		this.hud.className = 'scene-hud';
 		options.container.append(this.canvas, this.hud);
-		this.scaleBar = new ScaleBarControl({ onMove: () => this.requestRender(), onChange: () => options.onScaleBarChange?.() }, options.container);
+		this.scaleBar = new ScaleBarControl({ onMove: () => this.requestRender(), onChange: () => options.onScaleBarChange?.(), onWheel: event => this.onWheel(event) }, options.container);
 		this.showScaleBar = options.showScaleBar !== false;
 		this.anchorScaleBarToImage = options.anchorScaleBarToImage === true;
 

@@ -126,12 +126,13 @@ function testSettingIsDeclaredAndReachesTheWebview() {
 
 function withFakeDom(run) {
 	const listeners = {};
-	const handle = { style: {}, className: '', title: '', addEventListener() {}, remove() {}, getBoundingClientRect: () => ({ left: 0, top: 0 }) };
+	const handleListeners = {};
+	const handle = { style: {}, className: '', title: '', addEventListener: (type, fn) => { handleListeners[type] = fn; }, remove() {}, getBoundingClientRect: () => ({ left: 0, top: 0 }) };
 	const saved = { window: global.window, document: global.document, getComputedStyle: global.getComputedStyle };
 	global.window = { innerWidth: 1000, innerHeight: 800, addEventListener: (type, fn) => { listeners[type] = fn; }, removeEventListener() {} };
 	global.document = { createElement: () => handle, body: { appendChild() {} }, documentElement: {} };
 	global.getComputedStyle = () => ({ getPropertyValue: () => '' });
-	try { run({ handle, listeners }); } finally { Object.assign(global, saved); }
+	try { run({ handle, listeners, handleListeners }); } finally { Object.assign(global, saved); }
 }
 
 function testDraggingWhileAnchoredToTheImageStoresAnImagePosition() {
@@ -160,6 +161,22 @@ function testDraggingWhileAnchoredToTheImageStoresAnImagePosition() {
 		control.draw(ctx, { ...input, imageRect: rect });
 		assert.equal(control.getPosition().anchor, 'image', 'and turning it on again goes back');
 	});
+}
+
+function testWheelOverTheBarReachesTheViewer() {
+	withFakeDom(({ handleListeners }) => {
+		const { ScaleBarControl } = load('media/modules/scale-bar.ts');
+		const wheels = [];
+		new ScaleBarControl({ onMove() {}, onChange() {}, onWheel: event => wheels.push(event) });
+		const event = { deltaY: 100 };
+		handleListeners.wheel(event);
+		assert.deepEqual(wheels, [event], 'a viewer whose wheel handler is not above the handle receives the wheel');
+		assert.doesNotThrow(() => {
+			new ScaleBarControl({ onMove() {}, onChange() {} });
+			handleListeners.wheel(event);
+		}, 'without a handler the event is left to bubble');
+	});
+	assert.match(read('media/modules/scene/scene-viewer.ts'), /onWheel: event => this\.onWheel\(event\)/, 'the Xenium scene zooms with the cursor over the bar');
 }
 
 function testDroppingTheBarOnTheImageCornerSnapsItBack() {
@@ -230,6 +247,7 @@ testAnchoredToImageStartsAtTheImageBottomAndStaysInTheViewer();
 testTheBarKeepsItsPlaceAtTheImageCornerWhateverTheZoom();
 testAMovedImageAnchoredBarFollowsTheImage();
 testAPinnedBarMayLeaveTheViewportButTheAutomaticOneNever();
+testWheelOverTheBarReachesTheViewer();
 testDroppingTheBarOnTheImageCornerSnapsItBack();
 testPositionsKeepTheirFrameWhenSanitised();
 testSettingIsDeclaredAndReachesTheWebview();
