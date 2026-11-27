@@ -94,6 +94,8 @@ To list files for every sample without typing, name them in `settings.json`. `{s
 
 Each table or nucleus file names its one `parent`: `Xenium cells` (the bundle's own cells) or a name from `cellBoundaries`. It is listed under that cell set only, and an entry whose parent does not exist is not shown. The bundle's own `cells.parquet` is always listed as the first table of Xenium cells.
 
+By default `{sample_name}` is the whole folder name. When the folder name carries more than the sample id, set `tiffVisualizer.cells.sampleNamePattern` to a JavaScript regular expression with a named group `sample_name`; the first match in the folder name supplies the value. With `"(?<sample_name>sample[A-Z]\\d+)"`, a folder named `run001__sampleA1__20240101` gives `sampleA1` (backslashes are doubled in `settings.json`). For ordinary images the pattern is tested against the file name without its extension. If the pattern is invalid, has no `sample_name` group or does not match, the whole name is used and a warning is shown once. The pattern is read when a file is opened, so reopen files after changing it.
+
 Boundaries files are listed below the cell sets and load automatically. Table files are listed in their parent's Tables list and load into that set automatically. A file that fails to load shows a **Retry** button, and one that does not exist is shown as not found. Settings are read when the bundle opens. Files outside the workspace folders are read by the extension host and sent to the page, which is slower for large files.
 
 ### Whole-slide performance
