@@ -18,17 +18,30 @@ const warned = new Set<string>();
  */
 export function sampleNameFor(rawName: string): string {
 	const pattern = vscode.workspace.getConfiguration('tiffVisualizer.cells').get<string>('sampleNamePattern', '');
-	const { name, warning } = extractSampleName(pattern, rawName);
-	if (warning && !warned.has(warning)) {
-		warned.add(warning);
-		void vscode.window.showWarningMessage(warning);
+	const { name, warning, problem } = extractSampleName(pattern, rawName);
+	if (warning) {
+		// Once per pattern and problem, not per file: a pattern meant for other names would otherwise warn on every file.
+		const key = `${pattern}\0${problem}`;
+		if (warned.has(key)) { console.warn(`[Cells] ${warning}`); }
+		else { warned.add(key); void vscode.window.showWarningMessage(warning); }
 	}
 	return name;
 }
 
+/**
+ * `{sample_name}` resolved on first use, so the pattern is only applied (and can
+ * only warn) when a path actually uses `{sample_name}`.
+ */
+export type SampleName = () => string;
+
+export function lazySampleName(rawName: string): SampleName {
+	let name: string | undefined;
+	return () => (name ??= sampleNameFor(rawName));
+}
+
 /** `{sample_name}` for an image: its file name without the extension (and without `.ome`), through the pattern. */
-export function imageSampleName(image: vscode.Uri): string {
-	return sampleNameFor(Utils.basename(image).replace(/\.[^.]+$/, '').replace(/\.ome$/i, ''));
+export function imageSampleName(image: vscode.Uri): SampleName {
+	return lazySampleName(Utils.basename(image).replace(/\.[^.]+$/, '').replace(/\.ome$/i, ''));
 }
 
 /** A cell file named in settings, with where it was found (if it exists). */
@@ -40,7 +53,7 @@ export interface ConfiguredSource { name: string; kind: 'table' | 'boundaries'; 
  * (`cellsParquet`, `cellBoundariesParquet`, `nucleusBoundariesParquet`) are
  * still read, so existing settings.json files keep working.
  */
-export async function configuredSources(sampleFolder: vscode.Uri, sampleName: string): Promise<ConfiguredSource[]> {
+export async function configuredSources(sampleFolder: vscode.Uri, sampleName: SampleName): Promise<ConfiguredSource[]> {
 	const config = vscode.workspace.getConfiguration('tiffVisualizer.cells');
 	const out: ConfiguredSource[] = [];
 	for (const [settings, kind, parented] of [[['cellData', 'cellsParquet'], 'table', true], [['cellBoundaries', 'cellBoundariesParquet'], 'boundaries', false], [['nucleusBoundaries', 'nucleusBoundariesParquet'], 'boundaries', true]] as const) {
@@ -66,7 +79,7 @@ export function baseFolder(sampleFolder: vscode.Uri): vscode.Uri {
 }
 
 /** Turn a typed or configured path (with `{sample_name}`) into a location. */
-export function locate(text: string, sampleFolder: vscode.Uri, sampleName: string = sampleNameFor(Utils.basename(sampleFolder))): vscode.Uri {
+export function locate(text: string, sampleFolder: vscode.Uri, sampleName: SampleName = lazySampleName(Utils.basename(sampleFolder))): vscode.Uri {
 	const expanded = expandSampleName(text.trim(), sampleName);
 	if (isAbsolutePath(expanded)) { return sampleFolder.scheme === 'file' ? vscode.Uri.file(expanded) : sampleFolder.with({ path: expanded }); }
 	return Utils.joinPath(baseFolder(sampleFolder), ...expanded.split(/[\\/]/).filter(Boolean));
@@ -89,7 +102,7 @@ export async function specFor(
 }
 
 /** Reply to the webview's request to add a cell file: `text` is a typed path, null opens the file dialog. */
-export async function answerCellRequest(webview: vscode.Webview, requestId: unknown, sampleFolder: vscode.Uri, roots: readonly vscode.Uri[], text: string | null, sampleName: string = sampleNameFor(Utils.basename(sampleFolder))): Promise<void> {
+export async function answerCellRequest(webview: vscode.Webview, requestId: unknown, sampleFolder: vscode.Uri, roots: readonly vscode.Uri[], text: string | null, sampleName: SampleName = lazySampleName(Utils.basename(sampleFolder))): Promise<void> {
 	try {
 		let uri: vscode.Uri | undefined;
 		if (text === null) {

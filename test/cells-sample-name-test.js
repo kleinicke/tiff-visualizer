@@ -11,7 +11,12 @@ async function load(relative) {
 }
 
 (async () => {
-	const { extractSampleName } = await load('shared/cell-paths');
+	const { expandSampleName, extractSampleName } = await load('shared/cell-paths');
+	assert.strictEqual(expandSampleName('a/{sample_name}/{sample_name}.parquet', 'x$&y$1'), 'a/x$&y$1/x$&y$1.parquet', 'the name is inserted literally');
+	let calls = 0;
+	assert.strictEqual(expandSampleName('fixed/cells.parquet', () => { calls++; return 'S1'; }), 'fixed/cells.parquet');
+	assert.strictEqual(calls, 0, 'a template without {sample_name} does not resolve the name');
+	assert.strictEqual(expandSampleName('{sample_name}/x', () => 'S1'), 'S1/x');
 	const folder = 'run001__sampleA1__20240101';
 	const id = '(?<sample_name>sample[A-Z]\\d+)';
 
@@ -24,18 +29,19 @@ async function load(relative) {
 	assert.strictEqual(extractSampleName('(?<sample_name>a.b)', 'a\nb').warning !== undefined, true, '. does not cross a newline, so no match');
 
 	const failures = [
-		['(?<sample_name>', /not a valid regular expression/, 'an invalid pattern'],
-		['sample\\d+', /needs a named group/, 'a pattern with no sample_name group'],
-		['(sample[A-Z]\\d+)', /needs a named group/, 'a plain capture group is not enough'],
-		['\\(?<sample_name>x', /needs a named group/, 'an escaped parenthesis is not a group'],
-		['(?<sample_name>ZZ\\d+)', /does not match/, 'a pattern that does not match'],
-		['(?<sample_name>a)?b', /captured nothing/, 'a group that took no part in the match'],
+		['(?<sample_name>', /not a valid regular expression/, 'an invalid pattern', 'invalid'],
+		['sample\\d+', /needs a named group/, 'a pattern with no sample_name group', 'no-group'],
+		['(sample[A-Z]\\d+)', /needs a named group/, 'a plain capture group is not enough', 'no-group'],
+		['\\(?<sample_name>x', /needs a named group/, 'an escaped parenthesis is not a group', 'no-group'],
+		['(?<sample_name>ZZ\\d+)', /does not match/, 'a pattern that does not match', 'no-match'],
+		['(?<sample_name>a)?b', /captured nothing/, 'a group that took no part in the match', 'empty'],
 	];
-	for (const [pattern, message, label] of failures) {
+	for (const [pattern, message, label, problem] of failures) {
 		const result = extractSampleName(pattern, /captured nothing/.test(String(message)) ? 'b' : folder);
 		assert.strictEqual(result.name, /captured nothing/.test(String(message)) ? 'b' : folder, `${label} falls back to the whole name`);
 		assert.match(result.warning ?? '', message, `${label} explains itself`);
 		assert.match(result.warning, /tiffVisualizer\.cells\.sampleNamePattern/, `${label} names the setting`);
+		assert.strictEqual(result.problem, problem, `${label} reports a stable problem kind`);
 	}
 	console.log('cells sample name tests passed');
 })().catch(error => { console.error(error); process.exit(1); });

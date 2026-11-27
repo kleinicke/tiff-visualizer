@@ -1,8 +1,12 @@
 /** Path helpers for cell files, shared by the extension host and the viewers. Pure: no VS Code or DOM API. */
 
-/** Fill `{sample_name}` in a path template. */
-export function expandSampleName(template: string, sampleName: string): string {
-	return template.replace(/\{sample_name\}/g, sampleName);
+/**
+ * Fill `{sample_name}` in a path template. A function is only called when the
+ * template uses `{sample_name}`. The name is inserted literally: `$&` and similar
+ * replacement patterns in it are not expanded.
+ */
+export function expandSampleName(template: string, sampleName: string | (() => string)): string {
+	return template.replace(/\{sample_name\}/g, typeof sampleName === 'function' ? sampleName : () => sampleName);
 }
 
 export function isAbsolutePath(path: string): boolean {
@@ -15,7 +19,10 @@ export function sourceNameFromPath(path: string): string {
 	return file.replace(/\.(parquet|tiff?|csv|tsv)$/i, '') || path;
 }
 
-export interface SampleNameResult { name: string; warning?: string }
+/** Why a pattern could not supply the name; stable across file names, so a warning can be shown once per problem. */
+export type SampleNameProblem = 'invalid' | 'no-group' | 'no-match' | 'empty';
+
+export interface SampleNameResult { name: string; warning?: string; problem?: SampleNameProblem }
 
 /**
  * `{sample_name}` for a folder or file name. With no pattern it is the name
@@ -26,13 +33,13 @@ export interface SampleNameResult { name: string; warning?: string }
 export function extractSampleName(pattern: string | undefined, rawName: string): SampleNameResult {
 	const source = pattern?.trim();
 	if (!source) { return { name: rawName }; }
-	const fallback = (problem: string): SampleNameResult => ({ name: rawName, warning: `tiffVisualizer.cells.sampleNamePattern ${problem}; using "${rawName}" as {sample_name}.` });
+	const fallback = (problem: SampleNameProblem, detail: string): SampleNameResult => ({ name: rawName, problem, warning: `tiffVisualizer.cells.sampleNamePattern ${detail}; using "${rawName}" as {sample_name}.` });
 	let regex: RegExp;
-	try { regex = new RegExp(source); } catch (error) { return fallback(`is not a valid regular expression (${error instanceof Error ? error.message : String(error)})`); }
-	if (!/(?<!\\)\(\?<sample_name>/.test(source)) { return fallback('needs a named group (?<sample_name>...)'); }
+	try { regex = new RegExp(source); } catch (error) { return fallback('invalid', `is not a valid regular expression (${error instanceof Error ? error.message : String(error)})`); }
+	if (!/(?<!\\)\(\?<sample_name>/.test(source)) { return fallback('no-group', 'needs a named group (?<sample_name>...)'); }
 	const matched = regex.exec(rawName);
-	if (!matched) { return fallback(`does not match "${rawName}"`); }
+	if (!matched) { return fallback('no-match', `does not match "${rawName}"`); }
 	const name = matched.groups?.sample_name;
-	if (!name) { return fallback(`matched "${rawName}" but its sample_name group captured nothing`); }
+	if (!name) { return fallback('empty', `matched "${rawName}" but its sample_name group captured nothing`); }
 	return { name };
 }
