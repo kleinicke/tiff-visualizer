@@ -90,6 +90,16 @@ To list files for every sample without typing, name them in `settings.json`. `{s
 }
 ```
 
+Settings and typed paths accept the same glob patterns as image collections: `*` (any characters), `?` (one character), `[abc]` / `[a-z]` (character classes), and `{a,b}` (alternatives). Patterns are case-insensitive and may occur in any folder or file name. `**` does not search recursively. For example:
+
+```json
+"tiffVisualizer.cells.cellBoundaries": {
+  "xenium_run": "parent_folder/output-XETG*{sample_name}*/cell_boundaries.parquet"
+}
+```
+
+Characters substituted from `{sample_name}` are literal, including any wildcard characters in the sample name. Existing exact file paths take precedence. Otherwise, if several files match, the file with the newest modification time is selected; equal times use ascending path order. Hover over the file or cell set in the Cells panel to see its resolved path. If nothing matches, the entry shows as not found. Matching uses the VS Code filesystem API on desktop, web and remote workspaces.
+
 `cellBoundaries` and `cellData` take the same file types as the Add field: a `.parquet`, `.csv` or `.tsv`, and for `cellBoundaries` also a `.tif` label mask. (They were called `cellBoundariesParquet`, `cellsParquet` and `nucleusBoundariesParquet`; the old names are still read.)
 
 Each table or nucleus file names its one `parent`: `Xenium cells` (the bundle's own cells) or a name from `cellBoundaries`. It is listed under that cell set only, and an entry whose parent does not exist is not shown. The bundle's own `cells.parquet` is always listed as the first table of Xenium cells.

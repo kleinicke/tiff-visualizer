@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## 1.12.0
 
 - Fix panning that kept following the cursor after the mouse button was released outside the window, and keep a drag-pan going when the cursor leaves the window in the image viewer, as in the Xenium viewer.
 - Add a Xenium viewer with image channels, cell outlines and gene transcripts.
