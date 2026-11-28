@@ -1,7 +1,8 @@
 # Change Log
 
-## Unreleased
+## 1.12.0
 
+- Fix panning that kept following the cursor after the mouse button was released outside the window, and keep a drag-pan going when the cursor leaves the window in the image viewer, as in the Xenium viewer.
 - Add a Xenium viewer with image channels, cell outlines and gene transcripts.
 - Add a scale bar to the Xenium viewer and make Toggle Scale Bar work there.
 - Keep a dragged scale bar at its place in the image, and add `tiffVisualizer.scaleBar.anchorToImage` (default on) to anchor the bar to the bottom left of the viewer instead.

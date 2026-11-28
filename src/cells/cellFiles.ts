@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { Utils } from 'vscode-uri';
 import type { CellSourceSpec } from '../../media/modules/scene/xenium-manifest';
-import { expandSampleName, isAbsolutePath, sourceNameFromPath } from '../../shared/cell-paths';
+import { expandSampleName, extractSampleName, isAbsolutePath, sourceNameFromPath } from '../../shared/cell-paths';
+import { escapeGlobLiteral, expandGlobPatternAsync, hasGlob } from '../util/globPaths';
 
 /**
  * Locating cell files for the Cells panel, shared by the Xenium viewer and the
@@ -9,9 +10,39 @@ import { expandSampleName, isAbsolutePath, sourceNameFromPath } from '../../shar
  * name is `{sample_name}` in paths, and relative paths start at its workspace folder.
  */
 
-/** `{sample_name}` for an image: its file name without the extension (and without `.ome`). */
-export function imageSampleName(image: vscode.Uri): string {
-	return Utils.basename(image).replace(/\.[^.]+$/, '').replace(/\.ome$/i, '');
+const warned = new Set<string>();
+
+/**
+ * `{sample_name}` for a folder or file name: the name itself, or the part of it
+ * picked out by `tiffVisualizer.cells.sampleNamePattern`. A pattern that does
+ * not work is reported once and the whole name is used.
+ */
+export function sampleNameFor(rawName: string): string {
+	const pattern = vscode.workspace.getConfiguration('tiffVisualizer.cells').get<string>('sampleNamePattern', '');
+	const { name, warning, problem } = extractSampleName(pattern, rawName);
+	if (warning) {
+		// Once per pattern and problem, not per file: a pattern meant for other names would otherwise warn on every file.
+		const key = `${pattern}\0${problem}`;
+		if (warned.has(key)) { console.warn(`[Cells] ${warning}`); }
+		else { warned.add(key); void vscode.window.showWarningMessage(warning); }
+	}
+	return name;
+}
+
+/**
+ * `{sample_name}` resolved on first use, so the pattern is only applied (and can
+ * only warn) when a path actually uses `{sample_name}`.
+ */
+export type SampleName = () => string;
+
+export function lazySampleName(rawName: string): SampleName {
+	let name: string | undefined;
+	return () => (name ??= sampleNameFor(rawName));
+}
+
+/** `{sample_name}` for an image: its file name without the extension (and without `.ome`), through the pattern. */
+export function imageSampleName(image: vscode.Uri): SampleName {
+	return lazySampleName(Utils.basename(image).replace(/\.[^.]+$/, '').replace(/\.ome$/i, ''));
 }
 
 /** A cell file named in settings, with where it was found (if it exists). */
@@ -23,7 +54,7 @@ export interface ConfiguredSource { name: string; kind: 'table' | 'boundaries'; 
  * (`cellsParquet`, `cellBoundariesParquet`, `nucleusBoundariesParquet`) are
  * still read, so existing settings.json files keep working.
  */
-export async function configuredSources(sampleFolder: vscode.Uri, sampleName: string): Promise<ConfiguredSource[]> {
+export async function configuredSources(sampleFolder: vscode.Uri, sampleName: SampleName): Promise<ConfiguredSource[]> {
 	const config = vscode.workspace.getConfiguration('tiffVisualizer.cells');
 	const out: ConfiguredSource[] = [];
 	for (const [settings, kind, parented] of [[['cellData', 'cellsParquet'], 'table', true], [['cellBoundaries', 'cellBoundariesParquet'], 'boundaries', false], [['nucleusBoundaries', 'nucleusBoundariesParquet'], 'boundaries', true]] as const) {
@@ -35,9 +66,8 @@ export async function configuredSources(sampleFolder: vscode.Uri, sampleName: st
 			const parent = parented ? (value as { parent?: unknown } | null)?.parent : undefined;
 			if (typeof template !== 'string' || !template.trim()) { continue; }
 			if (parented && (typeof parent !== 'string' || !parent.trim())) { continue; }
-			const uri = locate(template, sampleFolder, sampleName);
-			const exists = await vscode.workspace.fs.stat(uri).then(() => true, () => false);
-			out.push({ name, kind, path: expandSampleName(template.trim(), sampleName), parent: typeof parent === 'string' ? parent.trim() : undefined, uri: exists ? uri : undefined });
+			const uri = await locate(template, sampleFolder, sampleName);
+			out.push({ name, kind, path: uri ? shownPath(uri) : expandSampleName(template.trim(), sampleName), parent: typeof parent === 'string' ? parent.trim() : undefined, uri });
 		}
 	}
 	return out;
@@ -48,11 +78,36 @@ export function baseFolder(sampleFolder: vscode.Uri): vscode.Uri {
 	return vscode.workspace.getWorkspaceFolder(sampleFolder)?.uri ?? vscode.workspace.workspaceFolders?.[0]?.uri ?? Utils.dirname(sampleFolder);
 }
 
-/** Turn a typed or configured path (with `{sample_name}`) into a location. */
-export function locate(text: string, sampleFolder: vscode.Uri, sampleName: string = Utils.basename(sampleFolder)): vscode.Uri {
+/** Build a path URI, keeping the sample host and workspace-relative base. */
+function pathUri(text: string, sampleFolder: vscode.Uri, sampleName: SampleName, quoteBase = false): vscode.Uri {
 	const expanded = expandSampleName(text.trim(), sampleName);
 	if (isAbsolutePath(expanded)) { return sampleFolder.scheme === 'file' ? vscode.Uri.file(expanded) : sampleFolder.with({ path: expanded }); }
-	return Utils.joinPath(baseFolder(sampleFolder), ...expanded.split(/[\\/]/).filter(Boolean));
+	const base = baseFolder(sampleFolder);
+	return Utils.joinPath(quoteBase ? base.with({ path: escapeGlobLiteral(base.path) }) : base, ...expanded.split(/[\\/]/).filter(Boolean));
+}
+
+/** Resolve a cell template to the newest file; equal mtimes use ascending URI order. */
+export async function locate(text: string, sampleFolder: vscode.Uri, sampleName: SampleName = lazySampleName(Utils.basename(sampleFolder))): Promise<vscode.Uri | undefined> {
+	// Existing literal paths win, including names containing glob metacharacters.
+	const exact = pathUri(text, sampleFolder, sampleName);
+	const stat = await vscode.workspace.fs.stat(exact).then(value => value, () => undefined);
+	if (stat?.type && (stat.type & vscode.FileType.File)) return exact;
+	if (!hasGlob(text.replace(/\{sample_name\}/g, ''))) return undefined;
+	const pattern = pathUri(text, sampleFolder, () => escapeGlobLiteral(sampleName()), true);
+	const matches = await expandGlobPatternAsync(shownPath(pattern), pattern, () => false, { expandDirectory: false, maxResults: Infinity });
+	let newest: { uri: vscode.Uri; mtime: number } | undefined;
+	for (const uri of matches) {
+		const stat = await vscode.workspace.fs.stat(uri).then(value => value, () => undefined);
+		if (!stat || !(stat.type & vscode.FileType.File)) continue;
+		if (!newest || stat.mtime > newest.mtime || (stat.mtime === newest.mtime && uri.toString() < newest.uri.toString())) {
+			newest = { uri, mtime: stat.mtime };
+		}
+	}
+	return newest?.uri;
+}
+
+function shownPath(uri: vscode.Uri): string {
+	return uri.scheme === 'file' ? uri.fsPath : uri.path;
 }
 
 export function isReachable(uri: vscode.Uri, roots: readonly vscode.Uri[]): boolean {
@@ -72,7 +127,7 @@ export async function specFor(
 }
 
 /** Reply to the webview's request to add a cell file: `text` is a typed path, null opens the file dialog. */
-export async function answerCellRequest(webview: vscode.Webview, requestId: unknown, sampleFolder: vscode.Uri, roots: readonly vscode.Uri[], text: string | null, sampleName: string = Utils.basename(sampleFolder)): Promise<void> {
+export async function answerCellRequest(webview: vscode.Webview, requestId: unknown, sampleFolder: vscode.Uri, roots: readonly vscode.Uri[], text: string | null, sampleName: SampleName = lazySampleName(Utils.basename(sampleFolder))): Promise<void> {
 	try {
 		let uri: vscode.Uri | undefined;
 		if (text === null) {
@@ -84,10 +139,10 @@ export async function answerCellRequest(webview: vscode.Webview, requestId: unkn
 			uri = picked[0];
 		} else {
 			if (!text.trim()) { throw new Error('Enter a path first.'); }
-			uri = locate(text, sampleFolder, sampleName);
-			if (!await vscode.workspace.fs.stat(uri).then(() => true, () => false)) { throw new Error(`Not found: ${uri.fsPath || uri.path}`); }
+			uri = await locate(text, sampleFolder, sampleName);
+			if (!uri) { throw new Error(`Not found: ${expandSampleName(text.trim(), sampleName)}`); }
 		}
-		const shown = uri.scheme === 'file' ? uri.fsPath : uri.path;
+		const shown = shownPath(uri);
 		const spec = await specFor(sourceNameFromPath(shown), 'unknown', shown, uri, webview, roots, true);
 		await webview.postMessage({ type: 'cellSource', requestId, spec });
 	} catch (error) {

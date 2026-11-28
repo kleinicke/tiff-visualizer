@@ -5063,10 +5063,12 @@ import type { CellsPanelModel } from './modules/cells/cells-model.js';
 		}, { passive: false });
 
 		// Single clicks leave the view unchanged; dragging pans in scroll-to-zoom mode.
+		let pressedPointerId: number | null = null;
+		container.addEventListener('pointerdown', e => { pressedPointerId = e.pointerId; }, true);
 		container.addEventListener('mousedown', (e) => {
 			if (!imageElement || !hasLoadedImage) { return; }
 			if (e.target === imageElement || e.target === container) {
-				zoomController.beginPan(e);
+				zoomController.beginPan(e, pressedPointerId);
 			}
 		});
 

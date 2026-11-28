@@ -60,6 +60,12 @@ media/layerCompositorWorker.bundle.js
 media/layerCompositorWorker.bundle.js.map
 media/comparisonPanel.bundle.js
 media/comparisonPanel.bundle.js.map
+media/xeniumCellsWorker.bundle.js
+media/xeniumCellsWorker.bundle.js.map
+media/xeniumTileWorker.bundle.js
+media/xeniumTileWorker.bundle.js.map
+media/xeniumViewer.bundle.js
+media/xeniumViewer.bundle.js.map
 
 # Output of `npm run benchmark:vscode`
 benchmark-vscode-result.json
@@ -76,7 +82,7 @@ packages/python/dist/
 packages/python/scientific_image_visualizer/_assets/
 
 # Xenium tests
-test-samples/scientific/xenium
+test-samples/scientific/xenium/*
 
 # Claude 
 .e2e-stage
