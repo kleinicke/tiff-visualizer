@@ -114,8 +114,8 @@ export class ZoomController {
 			this.container.classList.toggle('web-image-zoomed', newScale !== 'fit');
 		}
 		const viewport = this.viewport();
-		// Viewport point that keeps its image content in place; the view center
-		// unless a caller (touch pinch) zooms about another point.
+		// Viewport point that keeps its image content in place: the cursor or pinch
+		// midpoint when given, otherwise the view center (zoom commands).
 		const centerX = anchor?.x ?? viewport.left + viewport.width / 2;
 		const centerY = anchor?.y ?? viewport.top + viewport.height / 2;
 
@@ -325,7 +325,8 @@ export class ZoomController {
 
 		const smooth = scrollToZoom || (this.container.classList.contains('web-app') && !document.documentElement.classList.contains('jetbrains-host'));
 		const factor = wheelZoomFactor(e, this.viewport().height, smooth, this.settingsManager.constants.SCALE_PINCH_FACTOR);
-		this.updateScale((this.scale as number) * factor, scrollToZoom ? { x: e.clientX, y: e.clientY } : undefined);
+		// Both modes zoom about the cursor; normal mode can only hold it within the scroll range.
+		this.updateScale((this.scale as number) * factor, { x: e.clientX, y: e.clientY });
 	}
 
 	/** `tiffVisualizer.fitUpscale` (default on): Fit enlarges an image smaller than the view. */
@@ -486,7 +487,7 @@ export class ZoomController {
 	}
 
 	/** Safari emits GestureEvents for trackpad pinches instead of ctrl-wheel. */
-	handleGesture(event: Event & { scale?: number }) {
+	handleGesture(event: Event & { scale?: number, clientX?: number, clientY?: number }) {
 		if (!this.imageElement || !this.hasLoadedImage) { return; }
 		event.preventDefault();
 		if (event.type === 'gestureend') { this.gestureScale = null; return; }
@@ -495,7 +496,8 @@ export class ZoomController {
 			return;
 		}
 		if (this.gestureScale !== null && Number.isFinite(event.scale) && event.scale! > 0) {
-			this.updateScale(this.gestureScale * event.scale!);
+			const anchor = Number.isFinite(event.clientX) && Number.isFinite(event.clientY) ? { x: event.clientX!, y: event.clientY! } : undefined;
+			this.updateScale(this.gestureScale * event.scale!, anchor);
 		}
 	}
 

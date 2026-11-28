@@ -491,9 +491,7 @@ export class SceneViewer {
 		}
 		if (!event.deltaY) { return; }
 		const rect = this.canvas.getBoundingClientRect();
-		const x = this.scrollToZoom ? event.clientX - rect.left : this.viewWidth / 2;
-		const y = this.scrollToZoom ? event.clientY - rect.top : this.viewHeight / 2;
-		this.zoomBy(wheelZoomFactor(event, this.viewHeight, this.scrollToZoom), x, y);
+		this.zoomBy(wheelZoomFactor(event, this.viewHeight, this.scrollToZoom), event.clientX - rect.left, event.clientY - rect.top);
 	}
 
 	private onPointerDown(event: PointerEvent): void {

@@ -55,6 +55,12 @@ let event = wheel();
 controller.handleWheelZoom(event, false, false);
 assert.equal(event.prevented, false);
 assert.equal(controller.scale, 2);
+// Normal-mode modifier zoom (and trackpad pinch, which arrives as ctrl-wheel) also follows the cursor.
+event = wheel({ ctrlKey: true });
+controller.handleWheelZoom(event, true, false);
+assert.equal(event.prevented, true);
+assert.ok(controller.scale > 2);
+assert.deepEqual(controller.anchor, { x: 30, y: 40 });
 
 ({ controller } = create({ scrollToZoom: true }));
 event = wheel();

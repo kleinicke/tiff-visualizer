@@ -28,7 +28,8 @@ it, which is how you get two people looking at the same pixel of the same file.
 ## Zoom and pan
 
 Hold `Option` (macOS) or `Ctrl` and scroll to zoom, scroll to pan, pinch
-(trackpad or touch screen) to zoom, click the zoom status bar entry to fit the
+(trackpad or touch screen) to zoom — zooming keeps the point under the cursor
+or fingers in place as far as the scroll range allows — click the zoom status bar entry to fit the
 image again.
 
 Set `tiffVisualizer.scrollToZoom` to `true` to zoom with the wheel or trackpad

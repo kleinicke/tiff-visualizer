@@ -121,7 +121,7 @@ test('Xenium wheel uses pointer anchoring and preserves it across fit boundaries
   }
 });
 
-test('Xenium normal mode scrolls and modifier zoom anchors at the centre', async ({ page }) => {
+test('Xenium normal mode scrolls and modifier zoom anchors at the cursor', async ({ page }) => {
   await open(page, false);
   await page.evaluate(() => (window as any).scene.setCamera({ scale: 2, x: -600, y: -500 }));
   await page.mouse.move(250, 180); await page.mouse.wheel(30, 100);
@@ -134,8 +134,8 @@ test('Xenium normal mode scrolls and modifier zoom anchors at the centre', async
   await expect.poll(async () => (await camera(page)).scale).toBeGreaterThan(2);
   const after = await camera(page);
   expect(after.scale).toBeCloseTo(2 * 1.075, 6);
-  expect(after.x + (400 - before.x) / before.scale * after.scale).toBeCloseTo(400, 6);
-  expect(after.y + (300 - before.y) / before.scale * after.scale).toBeCloseTo(300, 6);
+  expect(after.x + (250 - before.x) / before.scale * after.scale).toBeCloseTo(250, 6);
+  expect(after.y + (180 - before.y) / before.scale * after.scale).toBeCloseTo(180, 6);
 });
 
 test('live Xenium mode change cancels dragging and gates double-click fit', async ({ page }) => {

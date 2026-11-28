@@ -11,6 +11,7 @@
 - Fix the scale bar and Measure values for ImageJ TIFFs with fractional pixel sizes, and keep trailing zeros in large values (`2000` was shown as `2`).
 - Add channel and gene groups, and improve multichannel image controls.
 - Add optional scroll-to-zoom and drag-to-pan controls.
+- Zoom about the cursor with modifier-wheel and trackpad pinch
 - Improve Fit for small images and window resizing.
 - Add SGI RGB image support.
 - Improve NumPy dataset loading and navigation.
