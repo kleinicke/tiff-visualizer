@@ -2177,6 +2177,15 @@ body img {
 	cursor: crosshair;
 }
 
+/* Height kept free along the bottom of the viewer for the scale bar, which sits
+   in the lower-left corner. Floating panels that grow down the left edge (the
+   Channels window) stop above it. The Xenium viewer lifts the bar above its
+   readout, which is the tallest case: the bar's top edge is 64px from the bottom
+   there. test/scale-bar-test.js keeps this value in step with the bar's placement. */
+:root {
+	--scale-bar-reserved-height: 72px;
+}
+
 .measure-scale-bar-handle {
 	position: fixed;
 	display: none;
@@ -2740,12 +2749,13 @@ body img {
 /* Tweak here: the tallest the Channels list may grow before it scrolls, so the Cells
    section below it stays in view for long channel lists. */
 .channels-panel {
-	--channels-list-max-height: 40vh;
+	--channels-list-max-height: 30vh;
 	position: fixed;
 	top: 20px;
 	left: 20px;
 	width: 300px;
-	max-height: calc(100vh - 40px);
+	/* Stop above the scale bar. The Cells and Transcripts sections shrink and scroll to fit. */
+	max-height: calc(100vh - 20px - var(--scale-bar-reserved-height, 72px) - var(--measure-scale-bar-bottom-inset, 0px));
 	background: var(--vscode-editor-background, #1e1e1e);
 	border: 1px solid var(--vscode-panel-border, #3c3c3c);
 	border-radius: 6px;

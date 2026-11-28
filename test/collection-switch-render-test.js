@@ -354,8 +354,10 @@ function testScaleBarIsASessionPreference() {
 	const previewSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'imagePreview', 'imagePreview.ts'), 'utf8');
 	const webviewSource = fs.readFileSync(path.join(__dirname, '..', 'media', 'imagePreview.ts'), 'utf8');
 
-	assert.match(webviewSource, /measureCalibration\.origin !== 'none'[\s\S]{0,500}?tiffVisualizer\.toggleScaleBar/,
-		'the scale-bar toggle must be available in the viewer menu for calibrated images');
+	assert.doesNotMatch(webviewSource, /'Hide Scale Bar'|'Show Scale Bar'/,
+		'showing and hiding the scale bar is the command and the Measure panel checkbox, not a viewer menu item');
+	assert.match(webviewSource, /measureCalibration\.origin !== 'none' && roiOverlay\.hasCustomScaleBarPosition\(\)[\s\S]{0,200}?Reset Scale Bar Position/,
+		'a moved scale bar can still be put back from the viewer menu');
 	assert.match(webviewSource, /scaleBarPosition: roiOverlay\.getScaleBarPosition\(\)/,
 		'a moved scale bar must persist with the webview across image switches and reloads');
 	assert.match(webviewSource, /persistedState\.scaleBarPosition[\s\S]{0,120}?roiOverlay\.setScaleBarPosition/,

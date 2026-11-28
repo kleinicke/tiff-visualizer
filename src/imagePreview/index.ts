@@ -17,7 +17,10 @@ import { getOutputChannel } from '../extension';
 export { ImagePreviewManager } from './imagePreviewManager';
 export { ImagePreview } from './imagePreview';
 
-export function registerImagePreviewSupport(context: vscode.ExtensionContext, binarySizeStatusBarEntry: BinarySizeStatusBarEntry): vscode.Disposable {
+/** The registration's disposable, plus the manager other viewers register with to receive shared commands. */
+export type ImagePreviewRegistration = vscode.Disposable & { readonly previewManager: ImagePreviewManager };
+
+export function registerImagePreviewSupport(context: vscode.ExtensionContext, binarySizeStatusBarEntry: BinarySizeStatusBarEntry): ImagePreviewRegistration {
 	const outputChannel = getOutputChannel();
 
 	const disposables: vscode.Disposable[] = [];
@@ -92,5 +95,5 @@ export function registerImagePreviewSupport(context: vscode.ExtensionContext, bi
 	disposables.push(registerComparisonPanelSupport(context));
 
 	outputChannel.appendLine('Image preview support registered successfully');
-	return vscode.Disposable.from(...disposables);
+	return Object.assign(vscode.Disposable.from(...disposables), { previewManager });
 }

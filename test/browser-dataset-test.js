@@ -121,7 +121,6 @@ const commands = fs.readFileSync('src/imagePreview/commands.ts', 'utf8');
 const zoomController = fs.readFileSync('media/modules/zoom-controller.ts', 'utf8');
 const webVendorAssets = fs.readFileSync('web/vendor-assets.js', 'utf8');
 const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-const roiOverlay = fs.readFileSync('media/modules/measure/roi-overlay.ts', 'utf8');
 assert.match(html, /class="web-drop-zone"/, 'the empty state should be centered on a large drop target');
 assert.doesNotMatch(html, /data-web-action="close-control"/, 'display popovers should not need a close button');
 assert.match(css, /> canvas:not\(\.scale-to-fit\)[\s\S]*?max-height: none !important/, 'zoomed canvases must not retain fit-mode height limits');
@@ -202,7 +201,7 @@ assert.match(host, /scientific-image-depth/, 'the browser host should hand the s
 assert.match(netlify, /Cross-Origin-Opener-Policy = "same-origin-allow-popups"/, 'the deployed page must retain its 3D viewer popup connection');
 assert.match(netlify, /connect-src 'self' https: blob: data:/, 'the deployed page must permit user-selected HTTPS image hosts');
 assert.match(css, /--measure-scale-bar-bottom-inset:\s*28px/, 'the site should reserve its fixed status-bar height for the scale bar');
-assert.match(roiOverlay, /window\.innerHeight - bottomInset/, 'the shared scale bar should honor a host-provided bottom inset');
+assert.match(fs.readFileSync('media/modules/scale-bar.ts', 'utf8'), /input\.viewportHeight - input\.bottomInset/, 'the shared scale bar should honor a host-provided bottom inset');
 assert.match(fs.readFileSync('ui/components/MeasureSegment.svelte', 'utf8'), /pending\s*\?\s*'Analyzing objects…'/, 'pending analysis must not be described as zero accepted objects');
 
 console.log('Browser dataset host tests passed');

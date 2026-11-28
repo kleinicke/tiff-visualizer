@@ -5,15 +5,15 @@
   import CellsDisplayToggle from './CellsDisplayToggle.svelte';
   import CellsSelection from './CellsSelection.svelte';
   import CellsTables from './CellsTables.svelte';
-  let { set }: { set: CellSetModel } = $props();
-  let open = $state(true);
+  // The fold state belongs to CellsSection: folding the whole section unmounts its sets.
+  let { set, open, ontoggle }: { set: CellSetModel; open: boolean; ontoggle: () => void } = $props();
   const view = $derived(set.view);
   const discreteMetrics = $derived(view.metrics.filter(metric => metric.kind === 'discrete'));
   const continuousMetrics = $derived(view.metrics.filter(metric => metric.kind === 'continuous'));
 </script>
 <div class="cell-set" class:dimmed={!set.visible}>
   <div class="cell-set-top" title={set.path}>
-    <button class="channel-fold" aria-expanded={open} title={open ? 'Hide this cell set\'s controls' : 'Show this cell set\'s controls'} onclick={() => (open = !open)}>{open ? '▾' : '▸'}</button>
+    <button class="channel-fold" aria-expanded={open} title={open ? 'Hide this cell set\'s controls' : 'Show this cell set\'s controls'} onclick={ontoggle}>{open ? '▾' : '▸'}</button>
     <input type="checkbox" checked={set.visible} title="Show these cells" onchange={e => set.setVisible(e.currentTarget.checked)}>
     <input type="color" class="channel-swatch" value={set.color} title="Outline colour" oninput={e => set.setColor(e.currentTarget.value)}>
     <span class="channel-name">{set.name}</span>

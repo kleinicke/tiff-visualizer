@@ -974,6 +974,23 @@ async function main() {
 		assert.strictEqual(fromList.unit, '\u00B5m');
 	});
 
+	await test('rational resolution tags are read as the decoder prints them', () => {
+		const description = 'ImageJ=1.53v\nimages=41\nchannels=41\nmode=color\nunit=\\u00B5m\nspacing=NaN\n';
+		const tags = (x, unit = '1') => [
+			{ tag: 282, name: 'XResolution', value: x }, { tag: 283, name: 'YResolution', value: x },
+			{ tag: 296, name: 'ResolutionUnit', value: unit }, { tag: 270, name: 'ImageDescription', value: description },
+		];
+		const real = calibration.calibrationFromTagList(tags('1970051/1000000 (1.970051)'));
+		close(real.pixelWidth, 1 / 1.970051, 1e-12, 'pixel width from "N/D (x)"');
+		assert.strictEqual(real.unit, '\u00B5m');
+		assert.strictEqual(calibration.chooseScaleBarLength(1856, real).label, '200 \u00B5m', 'a 1856 px wide image gets a sensible bar');
+		assert.strictEqual(calibration.calibrationFromTagList(tags('1/3 (0.333333)')).pixelWidth, 3, 'the exact fraction wins over its rounded decimal');
+		close(calibration.calibrationFromTagList(tags('4, 1')).pixelWidth, 0.25, 1e-12, 'the "num, den" form still works');
+		close(calibration.calibrationFromTagList(tags('4')).pixelWidth, 0.25, 1e-12, 'a plain number still works');
+		close(calibration.calibrationFromTagList(tags('1970051/1000000 (1.970051), 5/1 (5.000000)')).pixelWidth, 1 / 1.970051, 1e-12, 'the first of several values');
+		assert.strictEqual(calibration.calibrationFromTagList(tags('5/0')), null, 'a zero denominator is not a scale');
+	});
+
 	await test('OME physical sizes win over resolution tags', () => {
 		const result = calibration.autoCalibration(
 			{ physicalSizeX: 0.325, physicalSizeY: 0.325, physicalSizeXUnit: 'µm' },
@@ -1035,6 +1052,23 @@ async function main() {
 		assert.strictEqual(calibration.calibrationFromDicom({ pixelSpacing: '0.5' }), null);
 		assert.strictEqual(calibration.calibrationFromDicom({ pixelSpacing: '0\\0' }), null);
 		assert.strictEqual(calibration.calibrationFromDicom({ pixelSpacing: 'n/a\\n/a' }), null);
+	});
+
+	await test('numbers keep the zeros that are part of their value', () => {
+		for (const [value, text] of [[1000, '1000'], [2000, '2000'], [10000, '10000'], [500000, '500000'], [100, '100'], [10, '10'], [0.5, '0.5'], [0.25, '0.25'], [1.5, '1.5'], [0, '0'], [-2000, '-2000'], [12.3456, '12.35']]) {
+			assert.strictEqual(calibration.formatNumber(value), text, `formatNumber(${value})`);
+		}
+		assert.strictEqual(calibration.formatNumber(2000, 6), '2000');
+		assert.strictEqual(calibration.formatNumber(100000, 6), '100000');
+	});
+
+	await test('a zoomed-out scale bar keeps its magnitude (ImageJ 1.97 pixels per micron)', () => {
+		const cal = calibration.calibrationFromTiffTags({ t282: 1.97, t283: 1.97, t296: 1, t270: 'ImageJ=1.54f\nunit=um\n' });
+		assert.ok(Math.abs(cal.pixelWidth - 1 / 1.97) < 1e-12);
+		const labels = [[1000, '100 um'], [5000, '500 um'], [10000, '1000 um'], [20000, '2000 um'], [100000, '10000 um']];
+		for (const [visible, label] of labels) {
+			assert.strictEqual(calibration.chooseScaleBarLength(visible, cal).label, label, `${visible} px visible`);
+		}
 	});
 
 	await test('the scale bar picks a round number', () => {
