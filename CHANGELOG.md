@@ -7,6 +7,8 @@
 - Add a scale bar to the Xenium viewer and make Toggle Scale Bar work there.
 - Keep a dragged scale bar at its place in the image. The new `tiffVisualizer.scaleBar.anchorToImage` setting (default on) controls this; turn it off to keep the bar in the bottom left of the viewer instead.
 - Add cell overlays to ordinary images using TIFF label masks or Parquet boundaries, with CSV/TSV measurement tables.
+- Add `tiffVisualizer.cells.sampleNamePattern` to take `{sample_name}` from the image name with a regular expression, and allow wildcards (`*`, `?`, `[a-z]`, `{a,b}`) in cell file paths.
+- Fix the scale bar and Measure values for ImageJ TIFFs with fractional pixel sizes, and keep trailing zeros in large values (`2000` was shown as `2`).
 - Add channel and gene groups, and improve multichannel image controls.
 - Add optional scroll-to-zoom and drag-to-pan controls.
 - Improve Fit for small images and window resizing.
