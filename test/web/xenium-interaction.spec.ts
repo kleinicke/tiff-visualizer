@@ -14,7 +14,7 @@ async function open(page: Page, enabled: boolean) {
     const w = window as any;
     // Synthetic pixels isolate camera/input behavior from TIFF and worker loading.
     const source = { levels: [{ index: 0, width: 1000, height: 800, reduction: 1, blockWidth: 256, blockHeight: 256 }], async readRegion(_level: number, rect: { width: number; height: number }) { return { ...rect, data: new Uint8Array(rect.width * rect.height) }; } };
-    w.scene = await w.SceneModule.SceneViewer.create({ container: document.getElementById('scene-root'), sources: [source], names: ['Test'], pixelSizeUm: 1, scrollToZoom, getSettings: () => [{ visible: true, min: 0, max: 255, color: '#ffffff' }], getSolo: () => null });
+    w.scene = await w.SceneModule.SceneViewer.create({ container: document.getElementById('scene-root'), sources: [source], names: ['Test'], pixelSizeUm: 1, scrollToZoom, anchorScaleBarToImage: false, getSettings: () => [{ visible: true, min: 0, max: 255, color: '#ffffff' }], getSolo: () => null });
     w.clicks = 0;
     w.scene.addOverlay({ draw() {}, onClick() { w.clicks++; return true; } });
   }, enabled);

@@ -59,42 +59,32 @@ export interface ScaleBarInput {
 	bottomInset: number;
 }
 
-const EDGE = 0;
 export const SCALE_BAR_PAD_X = 6;
 export const SCALE_BAR_PAD_TOP = 16;
 export const SCALE_BAR_HEIGHT = 25;
+/** Height of the dark box below the baseline. */
+const PAD_BOTTOM = SCALE_BAR_HEIGHT - SCALE_BAR_PAD_TOP;
 
 /**
- * Gap between the image's lower-left corner and the bar's dark box, in screen
- * pixels. It shrinks with a small image so a zoomed-out bar keeps its place
- * relative to the corner instead of looking adrift on a thumbnail-sized image.
- */
-export function imageCornerInset(rect: { width: number; height: number }): number {
-	return 0;
-}
-
-/**
- * Left end and baseline of the bar when it rests in the lower-left corner of
- * the image, not held inside the viewport. A viewer's bottom clearance does not
- * apply here: it keeps the bar off the viewer's own readout, which only matters
- * once the image reaches the bottom of the viewer.
+ * Left end and baseline of the bar when its dark box rests flush in the
+ * lower-left corner of the image, not held inside the viewport. A viewer's
+ * bottom clearance does not apply here: it keeps the bar off the viewer's own
+ * readout, which only matters once the image reaches the bottom of the viewer.
  */
 export function imageRestingPoint(rect: ScaleBarImageRect): { x: number; y: number } {
-	const inset = imageCornerInset(rect);
-	return {
-		x: rect.left + inset + SCALE_BAR_PAD_X,
-		y: rect.top + rect.height - inset - (SCALE_BAR_HEIGHT - SCALE_BAR_PAD_TOP),
-	};
+	return { x: rect.left + SCALE_BAR_PAD_X, y: rect.top + rect.height - PAD_BOTTOM };
 }
 
+/**
+ * Viewport fractions are clamped to the viewport. Image fractions are not: a
+ * bar may be placed beside or below a small image, so its fraction of the
+ * image lies outside 0..1.
+ */
 export function clampScaleBarPosition(position: ScaleBarPosition | null): ScaleBarPosition | null {
-	return position && Number.isFinite(position.x) && Number.isFinite(position.y)
-		? {
-			x: Math.max(0, Math.min(1, position.x)),
-			y: Math.max(0, Math.min(1, position.y)),
-			...(position.anchor === 'image' ? { anchor: 'image' as const } : {}),
-		}
-		: null;
+	if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y)) { return null; }
+	return position.anchor === 'image'
+		? { x: position.x, y: position.y, anchor: 'image' }
+		: { x: Math.max(0, Math.min(1, position.x)), y: Math.max(0, Math.min(1, position.y)) };
 }
 
 interface Frame {
@@ -142,11 +132,11 @@ export function placeScaleBar(input: ScaleBarInput): ScaleBarPlacement | null {
 	const requestedX = placed ? placed.x : automaticX;
 	const requestedY = placed ? placed.y : automaticY;
 	// A bar pinned to a place in the image goes wherever that place goes, off
-	// screen included. Every other placement stays inside the viewport.
+	// screen included. Every other placement keeps its whole box inside the viewport.
 	const pinned = Boolean(input.position?.anchor === 'image' && rect);
 	return {
-		x: pinned ? requestedX : Math.max(EDGE, Math.min(input.viewportWidth - length - EDGE, requestedX)),
-		y: pinned ? requestedY : Math.max(20, Math.min(visibleBottom - EDGE, requestedY)),
+		x: pinned ? requestedX : Math.max(SCALE_BAR_PAD_X, Math.min(input.viewportWidth - length - SCALE_BAR_PAD_X, requestedX)),
+		y: pinned ? requestedY : Math.max(20, Math.min(visibleBottom - PAD_BOTTOM, requestedY)),
 		length,
 		label: bar.label,
 	};
@@ -219,11 +209,13 @@ export class ScaleBarControl {
 		});
 		window.addEventListener('mousemove', this.moveDrag);
 		window.addEventListener('mouseup', this.endDrag);
+		window.addEventListener('blur', this.endDrag);
 	}
 
 	dispose(): void {
 		window.removeEventListener('mousemove', this.moveDrag);
 		window.removeEventListener('mouseup', this.endDrag);
+		window.removeEventListener('blur', this.endDrag);
 		this.handle.remove();
 	}
 
@@ -287,6 +279,8 @@ export class ScaleBarControl {
 
 	private moveDrag = (event: MouseEvent): void => {
 		if (!this.dragOffset) { return; }
+		// The button was released outside the webview, so no mouseup arrived.
+		if (event.buttons === 0) { this.endDrag(); return; }
 		const visibleBottom = Math.max(1, window.innerHeight - readBottomInset());
 		const x = event.clientX - this.dragOffset.x;
 		const y = event.clientY - this.dragOffset.y;

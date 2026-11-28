@@ -133,7 +133,7 @@ export class RoiOverlay {
 	private wandTolerance: number | null = null;
 	private showScaleBar = true;
 	/** `tiffVisualizer.scaleBar.anchorToImage`: the bar follows the image instead of the viewer. */
-	private anchorScaleBarToImage = false;
+	private anchorScaleBarToImage = true;
 	/**
 	 * Keep the scale bar on screen while the measurement panel is closed.
 	 *

@@ -48,7 +48,7 @@ function testCustomPositionIsViewportRelativeAndClamped() {
 	const middle = placeScaleBar({ ...base, position: { x: 0.5, y: 0.5 } });
 	assert.deepEqual([middle.x, middle.y], [500, 400]);
 	const corner = placeScaleBar({ ...base, position: { x: 1, y: 1 } });
-	assert.deepEqual([corner.x, corner.y], [600, 800], 'the bar stays fully inside the viewport');
+	assert.deepEqual([corner.x, corner.y], [594, 791], 'the whole box stays inside the viewport');
 }
 
 function testPositionsAreSanitised() {
@@ -103,11 +103,11 @@ function testAPinnedBarMayLeaveTheViewportButTheAutomaticOneNever() {
 	const automatic = placeScaleBar({ ...base, anchorToImage: true, position: null, imageRect: { left: -900, top: -700, width: 600, height: 400 } });
 	assert.ok(automatic.x >= 0 && automatic.y >= 20 && automatic.y <= 800, 'the automatic bar is held inside the viewer');
 	const viewerFrame = placeScaleBar({ ...base, position: { x: 1, y: 1 } });
-	assert.deepEqual([viewerFrame.x, viewerFrame.y], [600, 800], 'viewer-anchored bars are still clamped');
+	assert.deepEqual([viewerFrame.x, viewerFrame.y], [594, 791], 'viewer-anchored bars are still clamped');
 }
 
 function testPositionsKeepTheirFrameWhenSanitised() {
-	assert.deepEqual(clampScaleBarPosition({ x: 2, y: -1, anchor: 'image' }), { x: 1, y: 0, anchor: 'image' });
+	assert.deepEqual(clampScaleBarPosition({ x: 2, y: -1, anchor: 'image' }), { x: 2, y: -1, anchor: 'image' }, 'an image fraction outside 0..1 is a place beside the image');
 	assert.deepEqual(clampScaleBarPosition({ x: 0.2, y: 0.3 }), { x: 0.2, y: 0.3 }, 'older saved positions stay viewer-relative');
 }
 
@@ -121,7 +121,7 @@ function testSettingIsDeclaredAndReachesTheWebview() {
 	assert.equal((host.match(/scaleBarAnchorToImage: this\.getScaleBarAnchorToImage\(\)/g) || []).length, 3, 'all three settings messages carry it');
 	assert.match(host, /affectsConfiguration\('tiffVisualizer\.scaleBar\.anchorToImage'\)/, 'changing it updates open previews');
 	const webview = read('media/imagePreview.ts');
-	assert.equal((webview.match(/setAnchorScaleBarToImage\(settingsManager\.settings\.scaleBarAnchorToImage === true\)/g) || []).length, 2, 'bootstrap and update messages apply it');
+	assert.equal((webview.match(/setAnchorScaleBarToImage\(settingsManager\.settings\.scaleBarAnchorToImage !== false\)/g) || []).length, 2, 'bootstrap and update messages apply it');
 }
 
 function withFakeDom(run) {
@@ -208,7 +208,7 @@ function testXeniumViewerAnchorsToTheTissueImage() {
 	assert.match(scene, /anchorToImage: this\.anchorScaleBarToImage/);
 	const viewer = read('media/xenium-viewer.ts');
 	assert.equal((viewer.match(/setAnchorScaleBarToImage\(/g) || []).length, 2, 'startup and settings messages both apply it');
-	assert.match(viewer, /anchorScaleBarToImage: startup\.scaleBarAnchorToImage === true/);
+	assert.match(viewer, /anchorScaleBarToImage: startup\.scaleBarAnchorToImage !== false/);
 	const host = read('src/xenium/xeniumEditor.ts');
 	assert.match(host, /scaleBarAnchorToImage: this\.getScaleBarAnchorToImage\(\)/);
 	assert.match(host, /affectsConfiguration\('tiffVisualizer\.scaleBar\.anchorToImage'\)/);

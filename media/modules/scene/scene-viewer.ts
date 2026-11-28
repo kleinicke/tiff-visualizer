@@ -95,7 +95,7 @@ export class SceneViewer {
 	private readonly hud: HTMLDivElement;
 	private readonly scaleBar: ScaleBarControl;
 	private showScaleBar = true;
-	private anchorScaleBarToImage = false;
+	private anchorScaleBarToImage = true;
 	private readonly context: CanvasRenderingContext2D;
 	private readonly overviewPosition: number;
 	private readonly overviewCanvas = document.createElement('canvas');
@@ -137,7 +137,7 @@ export class SceneViewer {
 		options.container.append(this.canvas, this.hud);
 		this.scaleBar = new ScaleBarControl({ onMove: () => this.requestRender(), onChange: () => options.onScaleBarChange?.(), onWheel: event => this.onWheel(event) }, options.container);
 		this.showScaleBar = options.showScaleBar !== false;
-		this.anchorScaleBarToImage = options.anchorScaleBarToImage === true;
+		this.anchorScaleBarToImage = options.anchorScaleBarToImage !== false;
 
 		this.resizeObserver = new ResizeObserver(() => this.resize());
 		this.resizeObserver.observe(options.container);

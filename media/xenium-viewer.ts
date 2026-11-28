@@ -198,14 +198,14 @@ async function start(manifest: SceneManifest): Promise<void> {
 			initialCamera: restorable?.camera,
 			onCameraChange: persist,
 			showScaleBar: startup.showScaleBar !== false,
-			anchorScaleBarToImage: startup.scaleBarAnchorToImage === true,
+			anchorScaleBarToImage: startup.scaleBarAnchorToImage !== false,
 			initialScaleBarPosition: restorable?.scaleBarPosition,
 			onScaleBarChange: persist,
 		});
 		// Configuration can change while the overview is being decoded.
 		viewer.setScrollToZoom(startup.scrollToZoom === true);
 		viewer.setShowScaleBar(startup.showScaleBar !== false);
-		viewer.setAnchorScaleBarToImage(startup.scaleBarAnchorToImage === true);
+		viewer.setAnchorScaleBarToImage(startup.scaleBarAnchorToImage !== false);
 
 		const colors = suggestedChannelColors(viewer.overviewPlanes, manifest.channels.map((_channel, position) => purposeTint(hintFor(position)?.purpose)), startup.channelDefaults);
 		settings = defaultChannelSettings(viewer.overviewPlanes, { colors });

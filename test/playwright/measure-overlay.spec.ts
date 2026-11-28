@@ -102,9 +102,10 @@ async function setupPage(page: import('@playwright/test').Page, options: { scale
 	});
 }
 
-test('the scale bar can be dragged outside the image and stays put while zooming', async ({ page }) => {
+test('a viewer-anchored scale bar can be dragged outside the image and stays put while zooming', async ({ page }) => {
 	await setupPage(page);
 	await page.evaluate(() => {
+		(window as any).__overlay.setAnchorScaleBarToImage(false);
 		(window as any).__calibration = {
 			pixelWidth: 0.5, pixelHeight: 0.5, unit: 'µm', origin: 'tags',
 		};
@@ -141,6 +142,55 @@ test('the scale bar can be dragged outside the image and stays put while zooming
 	expect(zoomed).not.toBeNull();
 	expect(Math.abs(zoomed!.x - moved!.x)).toBeLessThanOrEqual(1);
 	expect(Math.abs(zoomed!.y - moved!.y)).toBeLessThanOrEqual(1);
+});
+
+test('an image-anchored scale bar can be dragged outside the image and keeps its place relative to the image while zooming', async ({ page }) => {
+	await setupPage(page);
+	await page.evaluate(() => {
+		(window as any).__calibration = {
+			pixelWidth: 0.5, pixelHeight: 0.5, unit: 'µm', origin: 'tags',
+		};
+		(window as any).__overlay.setShowScaleBar(true);
+	});
+	await redraw(page);
+
+	const handle = page.locator('.measure-scale-bar-handle');
+	await expect(handle).toBeVisible();
+	const initial = await handle.boundingBox();
+	expect(initial).not.toBeNull();
+
+	await page.mouse.move(initial!.x + initial!.width / 2, initial!.y + initial!.height / 2);
+	await page.mouse.down();
+	await page.mouse.move(680, 80);
+	await page.mouse.up();
+	await redraw(page);
+
+	const moved = await handle.boundingBox();
+	const imageRect = await page.evaluate(() => {
+		const rect = ((window as any).__imageElement as HTMLElement).getBoundingClientRect();
+		return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+	});
+	expect(moved).not.toBeNull();
+	expect(moved!.x).toBeGreaterThan(imageRect.right);
+
+	await page.evaluate(() => {
+		const image = (window as any).__imageElement as HTMLCanvasElement;
+		image.style.width = '400px';
+		image.style.height = '300px';
+		(window as any).__overlay.redraw();
+	});
+	await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => resolve(null))));
+	const zoomed = await handle.boundingBox();
+	const zoomedRect = await page.evaluate(() => {
+		const rect = ((window as any).__imageElement as HTMLElement).getBoundingClientRect();
+		return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+	});
+	// The bar's left end sits PAD_X (6 px) inside the handle, its baseline PAD_TOP (16 px) below the top.
+	const fx = (moved!.x + 6 - imageRect.left) / (imageRect.right - imageRect.left);
+	const fy = (moved!.y + 16 - imageRect.top) / (imageRect.bottom - imageRect.top);
+	expect(zoomed).not.toBeNull();
+	expect(Math.abs(zoomed!.x + 6 - (zoomedRect.left + fx * zoomedRect.width))).toBeLessThanOrEqual(1);
+	expect(Math.abs(zoomed!.y + 16 - (zoomedRect.top + fy * zoomedRect.height))).toBeLessThanOrEqual(1);
 });
 
 /** Force a synchronous redraw and wait for the frame to land. */
